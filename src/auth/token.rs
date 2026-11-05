@@ -172,12 +172,10 @@ impl TokenStore for SsoCache {
         )
     }
 
-    /// Deletes the token and its lock file.
+    /// Deletes the token. The lock file stays: a process waiting on it would otherwise lock an
+    /// unlinked file while a newcomer locks a fresh one, and both would hold "the" lock.
     fn delete(&self, key: &str) -> Result<bool> {
-        let existed = fsx::remove_if_exists(&self.path(key))?;
-        // Best effort: another process may hold the lock file open (Windows refuses then).
-        let _ = fsx::remove_if_exists(&self.lock_path(key));
-        Ok(existed)
+        fsx::remove_if_exists(&self.path(key))
     }
 }
 
@@ -264,7 +262,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn saves_privately_and_deletes_with_the_lock_file() {
+    async fn delete_keeps_the_lock_exclusive() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SsoCache::new(dir.path().to_path_buf());
+        let held = store.lock("corp").await.unwrap();
+        store.save("corp", &token("2026-10-25T12:00:00Z")).unwrap();
+        assert!(store.delete("corp").unwrap());
+        let second = FileLock::acquire(&store.lock_path("corp"), Duration::from_millis(200)).await;
+        assert!(second.is_err(), "a second holder got the lock after delete");
+        drop(held);
+    }
+
+    #[tokio::test]
+    async fn saves_privately_and_deletes_the_token() {
         let dir = tempfile::tempdir().unwrap();
         let cache_dir = dir.path().join("sso/cache");
         let store = SsoCache::new(cache_dir.clone());
@@ -277,6 +287,7 @@ mod tests {
         assert_eq!(fsx::mode(&store.path("corp")), Some(0o600));
         assert!(store.delete("corp").unwrap());
         assert!(store.load("corp").unwrap().is_none());
-        assert_eq!(std::fs::read_dir(&cache_dir).unwrap().count(), 0);
+        assert!(!store.path("corp").exists());
+        assert!(store.lock_path("corp").exists(), "the lock file stays");
     }
 }
