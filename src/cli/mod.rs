@@ -38,7 +38,13 @@ pub struct Cli {
     /// [env: GAC_SESSION]
     // Context reads GAC_SESSION, not clap: clap counts an env value as the flag being given, so
     // --profile and --all would conflict with an exported GAC_SESSION.
-    #[arg(long, global = true, value_name = "NAME", help_heading = GLOBAL)]
+    #[arg(
+        long,
+        global = true,
+        value_name = "NAME",
+        help_heading = GLOBAL,
+        help = "The [sso-session] to use; needed only when more than one is configured [env: GAC_SESSION]"
+    )]
     #[allow(clippy::doc_markdown)] // this is --help text, where backticks would show
     session: Option<String>,
 
