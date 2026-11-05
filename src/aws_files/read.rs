@@ -138,7 +138,7 @@ impl AwsFiles {
         };
         let region = profile.get("sso_region").ok_or_else(|| {
             Error::config(format!(
-                "profile {name} has sso_start_url but no sso_region"
+                "profile `{name}` has sso_start_url but no sso_region"
             ))
         })?;
         Ok(Some(LegacySsoProfile {

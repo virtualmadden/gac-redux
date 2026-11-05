@@ -232,10 +232,17 @@ mod tests {
         let waiter = tokio::spawn(loopback.wait_for_code("/cb", "s1", Duration::from_secs(10)));
         // A prefetch, a reloaded bookmark or another local process must not end the login.
         for stray in ["/cb", "/cb?code=abc&state=evil", "/cb?error=access_denied"] {
-            assert!(get(port, stray).await.starts_with("HTTP/1.1 400"), "{stray}");
+            assert!(
+                get(port, stray).await.starts_with("HTTP/1.1 400"),
+                "{stray}"
+            );
         }
         assert!(!waiter.is_finished());
-        assert!(get(port, "/cb?code=abc&state=s1").await.starts_with("HTTP/1.1 200"));
+        assert!(
+            get(port, "/cb?code=abc&state=s1")
+                .await
+                .starts_with("HTTP/1.1 200")
+        );
         let code = waiter.await.unwrap().unwrap();
         assert_eq!(code.expose_secret(), "abc");
     }

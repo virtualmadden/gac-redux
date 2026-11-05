@@ -746,7 +746,10 @@ fn logout_revokes_and_deletes_the_token() {
 #[test]
 fn logout_owns_up_to_an_unreadable_token() {
     let sandbox = Sandbox::with_session();
-    sandbox.write_token("corp", &json!({"accessToken": "FAKE-x", "expiresAt": "soon"}));
+    sandbox.write_token(
+        "corp",
+        &json!({"accessToken": "FAKE-x", "expiresAt": "soon"}),
+    );
     sandbox
         .gac()
         .arg("logout")
@@ -755,6 +758,38 @@ fn logout_owns_up_to_an_unreadable_token() {
         .stderr(predicate::str::contains("unreadable token"))
         .stderr(predicate::str::contains("not logged in").not());
     assert_eq!(sandbox.mock.counter("logout"), 0);
+    assert!(!sandbox.token_path("corp").exists());
+}
+
+#[test]
+fn logout_all_names_what_it_could_not_log_out() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config(&format!(
+        "{SESSION}\n[sso-session broken]\nsso_start_url = https://other.awsapps.com/start\n\n[profile old]\nsso_start_url = https://old.awsapps.com/start\n"
+    ));
+    sandbox
+        .gac()
+        .args([
+            "login",
+            "--session",
+            "corp",
+            "--device-code",
+            "--no-browser",
+        ])
+        .assert()
+        .success();
+    sandbox
+        .gac()
+        .args(["logout", "--all"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Logged out of session `corp`."))
+        .stderr(predicate::str::contains(
+            "[sso-session broken] has no sso_region",
+        ))
+        .stderr(predicate::str::contains(
+            "profile `old` has sso_start_url but no sso_region",
+        ));
     assert!(!sandbox.token_path("corp").exists());
 }
 

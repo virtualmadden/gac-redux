@@ -3,22 +3,30 @@
 use crate::auth::{self, LogoutOutcome, Session};
 use crate::cli::LogoutArgs;
 use crate::cli::context::Context;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::ui;
 
 pub async fn run(ctx: &Context, args: LogoutArgs) -> Result<()> {
     let files = ctx.files().await?;
+    let mut unusable = Vec::new();
     let sessions: Vec<Session> = if args.all {
-        let mut all: Vec<Session> = files
-            .session_names()
-            .into_iter()
-            .filter_map(|name| files.sso_session(&name.parse().ok()?).ok())
-            .map(Session::from)
-            .collect();
-        for legacy in files.legacy_sso_profiles() {
-            let session = Session::from(legacy);
-            if !all.iter().any(|s| s.cache_key() == session.cache_key()) {
-                all.push(session);
+        let mut all = Vec::new();
+        for name in files.session_names() {
+            match name.parse().and_then(|name| files.sso_session(&name)) {
+                Ok(config) => all.push(Session::from(config)),
+                Err(err) => unusable.push(err),
+            }
+        }
+        for name in files.config_profile_names() {
+            match files.legacy_sso_profile(name) {
+                Ok(Some(legacy)) => {
+                    let session = Session::from(legacy);
+                    if !all.iter().any(|s| s.cache_key() == session.cache_key()) {
+                        all.push(session);
+                    }
+                }
+                Ok(None) => {}
+                Err(err) => unusable.push(err),
             }
         }
         all
@@ -45,7 +53,17 @@ pub async fn run(ctx: &Context, args: LogoutArgs) -> Result<()> {
         };
         ui::notice(capitalize(&message));
     }
-    Ok(())
+    if unusable.is_empty() {
+        return Ok(());
+    }
+    for err in &unusable {
+        ui::warn(format!("not logged out: {err}"));
+    }
+    Err(Error::config(format!(
+        "{} of the configured sessions and profiles could not be read, so they were not logged out",
+        unusable.len()
+    ))
+    .with_hint("fix them in the AWS config file, then run `gac logout --all` again"))
 }
 
 fn capitalize(text: &str) -> String {
