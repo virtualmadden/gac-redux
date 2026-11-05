@@ -2,6 +2,15 @@ use std::fmt;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    // Wrap only at spaces: a timestamp, path or URL split across lines cannot be copied.
+    let _ = miette::set_hook(Box::new(|_| {
+        Box::new(
+            miette::MietteHandlerOpts::new()
+                .break_words(false)
+                .word_splitter(textwrap::WordSplitter::NoHyphenation)
+                .build(),
+        )
+    }));
     match gac::run(std::env::args_os()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {

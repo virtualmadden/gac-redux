@@ -1154,6 +1154,7 @@ dependencies = [
  "sha2",
  "similar 3.2.1",
  "tempfile",
+ "textwrap",
  "thiserror",
  "tokio",
  "tracing",

@@ -527,6 +527,8 @@ fn an_expired_token_whose_refresh_is_rejected_is_not_promised_a_refresh() {
     let output = sandbox.gac().arg("list").assert().code(3);
     let err = stderr(output.get_output());
     assert_eq!(sandbox.mock.counter("refresh_rejected"), 1);
+    // At the default width of 80 the timestamp lands on the wrap point; it must stay whole.
+    assert!(err.contains("2020-01-01T00:00:00Z"), "{err}");
     assert!(err.contains("could not be refreshed"), "{err}");
     assert!(err.contains("InvalidGrantException"), "{err}");
     assert!(err.contains("gac login --session corp"), "{err}");
