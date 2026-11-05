@@ -22,6 +22,12 @@ pub async fn run(ctx: &Context, args: LoginArgs) -> Result<()> {
 
     let flow = if args.device_code {
         Flow::DeviceCode
+    } else if session.is_legacy() && !args.pkce {
+        ui::notice(format!(
+            "Using the device code flow: {} has an inline start URL, which the AWS CLI also signs in this way. Move it to an [sso-session] to sign in with a browser.",
+            session.label()
+        ));
+        Flow::DeviceCode
     } else if args.pkce {
         Flow::Pkce
     } else if over_ssh {
@@ -36,7 +42,11 @@ pub async fn run(ctx: &Context, args: LoginArgs) -> Result<()> {
         return Err(Error::usage(
             "--port sets the PKCE redirect port, but this login uses the device code flow",
         )
-        .with_hint("add --pkce to sign in with a browser on this machine, or drop --port"));
+        .with_hint(if session.is_legacy() {
+            "drop --port"
+        } else {
+            "add --pkce to sign in with a browser on this machine, or drop --port"
+        }));
     }
     let options = LoginOptions {
         flow,

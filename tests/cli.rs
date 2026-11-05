@@ -258,11 +258,23 @@ fn legacy_profiles_log_in_with_a_start_url_key() {
     sandbox.write_config(&format!(
         "[profile old]\nsso_start_url = {START_URL}\nsso_region = us-west-2\nsso_account_id = 111122223333\nsso_role_name = ReadOnly\n"
     ));
-    // Legacy profiles follow the same flow rules as sessions: PKCE by default.
-    let output = login_pkce(&sandbox, &["--profile", "old"]);
-    assert!(output.status.success(), "{}", stderr(&output));
-    assert_eq!(sandbox.mock.counter("token_code"), 1);
-    assert_eq!(sandbox.mock.counter("token_device"), 0);
+    // Like the AWS CLI, legacy profiles sign in with the device code flow only: their client is
+    // registered without scopes, which a PKCE /authorize request cannot match.
+    sandbox
+        .gac()
+        .args(["login", "--pkce", "--no-browser", "--profile", "old"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("inline start URL"));
+    assert_eq!(sandbox.mock.counter("register"), 0);
+    sandbox
+        .gac()
+        .args(["login", "--no-browser", "--profile", "old"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("inline start URL"));
+    assert_eq!(sandbox.mock.counter("token_code"), 0);
+    assert_eq!(sandbox.mock.counter("token_device"), 1);
     let token = sandbox.token(START_URL);
     assert!(
         token.get("refreshToken").is_none(),

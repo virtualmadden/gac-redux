@@ -127,6 +127,15 @@ pub async fn login(
     session: &Session,
     options: &LoginOptions,
 ) -> Result<CachedToken> {
+    if session.is_legacy() && options.flow == Flow::Pkce {
+        // botocore registers legacy clients without scopes, and an /authorize request has to
+        // name some, so the AWS CLI signs legacy profiles in with the device code flow only.
+        return Err(Error::usage(format!(
+            "{} has an inline start URL, so it signs in with the device code flow only",
+            session.label()
+        ))
+        .with_hint("drop --pkce, or move the profile to an [sso-session] with `gac setup`"));
+    }
     let oidc = Oidc::new(&session.region).await;
     let grant_kind = match options.flow {
         Flow::Pkce => Grant::AuthorizationCode,

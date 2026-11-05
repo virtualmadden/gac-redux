@@ -3,7 +3,7 @@
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 
 use crate::auth::oidc::{ClientCredentials, Oidc, TokenGrant};
-use crate::auth::registration::{self, DEFAULT_SCOPE};
+use crate::auth::registration;
 use crate::auth::{LoginOptions, Session};
 use crate::error::Result;
 use crate::oauth::loopback::Loopback;
@@ -62,11 +62,7 @@ fn authorize_url(
     challenge: &str,
     scopes: &[String],
 ) -> String {
-    let scopes = if scopes.is_empty() {
-        DEFAULT_SCOPE.to_owned()
-    } else {
-        scopes.join(" ")
-    };
+    let scopes = scopes.join(" ");
     let query = [
         ("response_type", "code"),
         ("client_id", client_id),
