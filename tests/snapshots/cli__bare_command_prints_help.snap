@@ -1,0 +1,39 @@
+---
+source: tests/cli.rs
+expression: "String::from_utf8_lossy(&help.get_output().stdout)"
+---
+Short-lived AWS credentials through IAM Identity Center.
+
+gac logs you in, keeps native sso-session profiles in ~/.aws/config in step with your account and
+role assignments, and shares its token cache with the AWS CLI and SDKs.
+
+Usage: gac [OPTIONS] <COMMAND>
+
+Commands:
+  setup   Create an [sso-session], or reuse one `aws configure sso` already wrote
+  login   Sign in to IAM Identity Center and write the shared token cache
+  logout  Revoke the session and delete its cached token
+  status  Show sessions, token and registration expiry, and managed blocks. No secrets
+  sync    Write native sso-session profiles for your accounts and roles into a managed block
+  list    List the accounts and roles you can use
+  doctor  Check the AWS files and caches for problems, with a fix for each. Read-only
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+Global options:
+      --session <NAME>
+          The [sso-session] to use; needed only when more than one is configured
+          
+          [env: GAC_SESSION]
+
+      --no-input
+          Never prompt; fail with a hint instead
+
+  -v, --verbose...
+          Log to stderr: -v for debug, -vv for trace. Secrets are never logged

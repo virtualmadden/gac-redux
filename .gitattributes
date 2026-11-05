@@ -1,0 +1,2 @@
+# Keep LF everywhere so snapshots and byte-exact fixtures match on Windows checkouts.
+* text=auto eol=lf

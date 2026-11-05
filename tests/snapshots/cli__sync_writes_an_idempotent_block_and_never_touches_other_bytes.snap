@@ -1,0 +1,32 @@
+---
+source: tests/cli.rs
+expression: "block.replace(\"\\r\\n\", \"\\n\")"
+---
+
+# BEGIN gac sync session=corp mode=sso name={account}/{role}
+# Managed by gac: edits inside this block are replaced on the next sync.
+[profile payments-prod/AdministratorAccess]
+sso_session = corp
+sso_account_id = 111122223333
+sso_role_name = AdministratorAccess
+
+[profile payments-prod/ReadOnly]
+sso_session = corp
+sso_account_id = 111122223333
+sso_role_name = ReadOnly
+
+[profile sandbox/PowerUser]
+sso_session = corp
+sso_account_id = 777788889999
+sso_role_name = PowerUser
+
+[profile sandbox/ReadOnly]
+sso_session = corp
+sso_account_id = 777788889999
+sso_role_name = ReadOnly
+
+[profile shared-services/ReadOnly]
+sso_session = corp
+sso_account_id = 444455556666
+sso_role_name = ReadOnly
+# END gac sync session=corp

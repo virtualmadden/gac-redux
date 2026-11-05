@@ -1,0 +1,18 @@
+---
+source: tests/cli.rs
+expression: "String::from_utf8_lossy(&help.get_output().stdout)"
+---
+Revoke the session and delete its cached token
+
+Usage: gac logout [OPTIONS]
+
+Options:
+  -p, --profile <NAME>  Log out of the session of this profile
+      --all             Log out of every configured session and legacy profile
+  -h, --help            Print help
+
+Global options:
+      --session <NAME>  The [sso-session] to use; needed only when more than one is configured [env:
+                        GAC_SESSION]
+      --no-input        Never prompt; fail with a hint instead
+  -v, --verbose...      Log to stderr: -v for debug, -vv for trace. Secrets are never logged
