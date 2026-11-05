@@ -34,6 +34,13 @@ fn bare_command_prints_help() {
     insta::assert_snapshot!(String::from_utf8_lossy(&help.get_output().stdout));
 }
 
+#[test]
+fn subcommand_help_lists_gac_session_inline() {
+    let sandbox = Sandbox::new();
+    let help = sandbox.gac().args(["logout", "--help"]).assert().success();
+    insta::assert_snapshot!(String::from_utf8_lossy(&help.get_output().stdout));
+}
+
 /// The block `gac setup` writes for the `corp` session.
 const SETUP_BLOCK: &str = "\
 # BEGIN gac sync session=corp

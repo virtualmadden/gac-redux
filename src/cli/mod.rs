@@ -12,7 +12,9 @@ mod sync;
 use std::ffi::OsString;
 use std::io::IsTerminal;
 
-use clap::{Args, Parser, Subcommand};
+use clap::error::ErrorKind;
+use clap::parser::ValueSource;
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 use crate::error::{Error, Result};
@@ -33,19 +35,18 @@ const GLOBAL: &str = "Global options";
     max_term_width = 100
 )]
 pub struct Cli {
-    /// The [sso-session] to use; needed only when more than one is configured
-    ///
-    /// [env: GAC_SESSION]
-    // Context reads GAC_SESSION, not clap: clap counts an env value as the flag being given, so
-    // --profile and --all would conflict with an exported GAC_SESSION.
+    /// The [sso-session] to use; needed only when more than one is configured.
+    // `run` keeps the value only when typed on the command line: clap counts an env value as the
+    // flag being given, so --profile and --all would conflict with an exported GAC_SESSION.
+    // Context reads GAC_SESSION itself; `env` is here for the help text.
     #[arg(
         long,
         global = true,
+        env = "GAC_SESSION",
+        hide_env_values = true,
         value_name = "NAME",
-        help_heading = GLOBAL,
-        help = "The [sso-session] to use; needed only when more than one is configured [env: GAC_SESSION]"
+        help_heading = GLOBAL
     )]
-    #[allow(clippy::doc_markdown)] // this is --help text, where backticks would show
     session: Option<String>,
 
     /// Never prompt; fail with a hint instead.
@@ -92,7 +93,7 @@ struct SetupArgs {
 #[derive(Debug, Args)]
 struct LoginArgs {
     /// Log in for the session of this profile; legacy inline-SSO profiles work too.
-    #[arg(short, long, value_name = "NAME", conflicts_with = "session")]
+    #[arg(short, long, value_name = "NAME")]
     profile: Option<String>,
 
     /// Use the device code flow (default over SSH).
@@ -115,11 +116,11 @@ struct LoginArgs {
 #[derive(Debug, Args)]
 struct LogoutArgs {
     /// Log out of the session of this profile.
-    #[arg(short, long, value_name = "NAME", conflicts_with_all = ["all", "session"])]
+    #[arg(short, long, value_name = "NAME", conflicts_with = "all")]
     profile: Option<String>,
 
     /// Log out of every configured session and legacy profile.
-    #[arg(long, conflicts_with = "session")]
+    #[arg(long)]
     all: bool,
 }
 
@@ -186,7 +187,19 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    let cli = Cli::parse_from(args);
+    let mut cmd = Cli::command();
+    let matches = cmd.try_get_matches_from_mut(args).unwrap_or_else(|err| err.exit());
+    let mut cli = Cli::from_arg_matches(&matches).unwrap_or_else(|err| err.format(&mut cmd).exit());
+    if matches.value_source("session") != Some(ValueSource::CommandLine) {
+        cli.session = None;
+    } else if let Some((name, other)) = cli.command.session_conflict() {
+        let sub = cmd.find_subcommand_mut(name).expect("the subcommand exists");
+        sub.error(
+            ErrorKind::ArgumentConflict,
+            format!("the argument '--session <NAME>' cannot be used with '{other}'"),
+        )
+        .exit();
+    }
     init_tracing(cli.verbose);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -198,6 +211,20 @@ where
             _ = tokio::signal::ctrl_c() => Err(Error::Interrupted),
         }
     })
+}
+
+impl Command {
+    /// The subcommand and its flag that a typed `--session` conflicts with, if one is given.
+    fn session_conflict(&self) -> Option<(&'static str, &'static str)> {
+        match self {
+            Command::Login(LoginArgs { profile: Some(_), .. }) => Some(("login", "--profile <NAME>")),
+            Command::Logout(LogoutArgs { profile: Some(_), .. }) => {
+                Some(("logout", "--profile <NAME>"))
+            }
+            Command::Logout(LogoutArgs { all: true, .. }) => Some(("logout", "--all")),
+            _ => None,
+        }
+    }
 }
 
 async fn dispatch(cli: Cli) -> Result<()> {
@@ -234,7 +261,6 @@ fn init_tracing(verbose: u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::CommandFactory;
 
     #[test]
     fn the_command_line_is_well_formed() {
