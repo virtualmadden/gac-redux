@@ -263,6 +263,8 @@ pub enum LogoutOutcome {
     Expired,
     /// `sso:Logout` failed; the file was deleted anyway.
     RevokeFailed,
+    /// The token file could not be parsed, so nothing was revoked; the file was deleted.
+    Unreadable,
     /// There was no token.
     NotLoggedIn,
 }
@@ -271,13 +273,16 @@ pub enum LogoutOutcome {
 pub async fn logout(store: &impl TokenStore, session: &Session) -> Result<LogoutOutcome> {
     let key = session.cache_key();
     let _lock = store.lock(key).await?;
-    let token = store.load(key).ok().flatten();
-    let outcome = match token {
-        None => LogoutOutcome::NotLoggedIn,
-        Some(token) if token.state(Timestamp::now()) == TokenState::Expired => {
+    let outcome = match store.load(key) {
+        Err(err) => {
+            tracing::warn!("{err}");
+            LogoutOutcome::Unreadable
+        }
+        Ok(None) => LogoutOutcome::NotLoggedIn,
+        Ok(Some(token)) if token.state(Timestamp::now()) == TokenState::Expired => {
             LogoutOutcome::Expired
         }
-        Some(token) => match Portal::new(session).await.logout(&token.access_token).await {
+        Ok(Some(token)) => match Portal::new(session).await.logout(&token.access_token).await {
             Ok(()) => LogoutOutcome::Revoked,
             Err(err) => {
                 tracing::warn!("sso:Logout failed; deleting the local token anyway: {err}");

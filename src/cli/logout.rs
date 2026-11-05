@@ -38,6 +38,9 @@ pub async fn run(ctx: &Context, args: LogoutArgs) -> Result<()> {
             LogoutOutcome::RevokeFailed => {
                 format!("Logged out of {label} locally; revoking the token server-side failed.")
             }
+            LogoutOutcome::Unreadable => format!(
+                "Deleted the unreadable token of {label}; it could not be revoked server-side, so its portal session lasts until it expires."
+            ),
             LogoutOutcome::NotLoggedIn => format!("{label} was not logged in."),
         };
         ui::notice(capitalize(&message));

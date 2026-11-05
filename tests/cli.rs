@@ -744,6 +744,21 @@ fn logout_revokes_and_deletes_the_token() {
 }
 
 #[test]
+fn logout_owns_up_to_an_unreadable_token() {
+    let sandbox = Sandbox::with_session();
+    sandbox.write_token("corp", &json!({"accessToken": "FAKE-x", "expiresAt": "soon"}));
+    sandbox
+        .gac()
+        .arg("logout")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("unreadable token"))
+        .stderr(predicate::str::contains("not logged in").not());
+    assert_eq!(sandbox.mock.counter("logout"), 0);
+    assert!(!sandbox.token_path("corp").exists());
+}
+
+#[test]
 fn doctor_flags_problems_with_fixes() {
     let sandbox = Sandbox::new();
     sandbox.write_config(&format!(
