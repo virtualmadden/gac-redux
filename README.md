@@ -11,8 +11,9 @@ byte-compatible with the AWS CLI and SDKs. AWS only.
 
 `gac` sets up the SDKs' own Identity Center support and then gets out of the way:
 
-1. `gac login` signs you in (PKCE in the browser, or a device code over SSH) and writes the token
-   to `~/.aws/sso/cache` in exactly the format the AWS CLI writes, so `aws sso login`, the AWS CLI
+1. `gac login` signs you in (PKCE in the browser, or a device code over SSH; legacy inline-SSO
+   profiles always use a device code, as the AWS CLI does) and writes the token to
+   `~/.aws/sso/cache` in exactly the format the AWS CLI writes, so `aws sso login`, the AWS CLI
    and every SDK share it.
 2. `gac sync` writes one native `sso-session` profile per account and role into a managed block
    in `~/.aws/config`.

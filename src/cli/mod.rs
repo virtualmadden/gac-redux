@@ -188,12 +188,16 @@ where
     T: Into<OsString> + Clone,
 {
     let mut cmd = Cli::command();
-    let matches = cmd.try_get_matches_from_mut(args).unwrap_or_else(|err| err.exit());
+    let matches = cmd
+        .try_get_matches_from_mut(args)
+        .unwrap_or_else(|err| err.exit());
     let mut cli = Cli::from_arg_matches(&matches).unwrap_or_else(|err| err.format(&mut cmd).exit());
     if matches.value_source("session") != Some(ValueSource::CommandLine) {
         cli.session = None;
     } else if let Some((name, other)) = cli.command.session_conflict() {
-        let sub = cmd.find_subcommand_mut(name).expect("the subcommand exists");
+        let sub = cmd
+            .find_subcommand_mut(name)
+            .expect("the subcommand exists");
         sub.error(
             ErrorKind::ArgumentConflict,
             format!("the argument '--session <NAME>' cannot be used with '{other}'"),
@@ -217,10 +221,12 @@ impl Command {
     /// The subcommand and its flag that a typed `--session` conflicts with, if one is given.
     fn session_conflict(&self) -> Option<(&'static str, &'static str)> {
         match self {
-            Command::Login(LoginArgs { profile: Some(_), .. }) => Some(("login", "--profile <NAME>")),
-            Command::Logout(LogoutArgs { profile: Some(_), .. }) => {
-                Some(("logout", "--profile <NAME>"))
-            }
+            Command::Login(LoginArgs {
+                profile: Some(_), ..
+            }) => Some(("login", "--profile <NAME>")),
+            Command::Logout(LogoutArgs {
+                profile: Some(_), ..
+            }) => Some(("logout", "--profile <NAME>")),
             Command::Logout(LogoutArgs { all: true, .. }) => Some(("logout", "--all")),
             _ => None,
         }
