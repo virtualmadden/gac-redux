@@ -164,7 +164,6 @@ impl TokenStore for SsoCache {
 
     /// Writes the token atomically with mode 0600.
     fn save(&self, key: &str, token: &CachedToken) -> Result<()> {
-        fsx::ensure_private_dir(&self.dir)?;
         fsx::write_atomic(
             &self.path(key),
             botocore_json::to_string(token).as_bytes(),

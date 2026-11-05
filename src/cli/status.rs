@@ -175,10 +175,7 @@ fn token_status(store: &impl TokenStore, session: &Session, now: Timestamp) -> T
 }
 
 fn block_status(config: &str, block: &Block) -> BlockStatus {
-    let profiles = config[block.range.clone()]
-        .lines()
-        .filter(|line| line.starts_with("[profile "))
-        .count();
+    let profiles = block.profile_names(config).count();
     let settings = SyncSettings::from_header(&block.header).unwrap_or_default();
     BlockStatus {
         profiles,

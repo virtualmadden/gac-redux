@@ -75,6 +75,15 @@ pub struct Block {
     pub header: Header,
 }
 
+impl Block {
+    /// The names of the `[profile NAME]` sections inside the block, as gac writes them.
+    pub fn profile_names<'a>(&self, content: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+        content[self.range.clone()]
+            .lines()
+            .filter_map(|line| line.strip_prefix("[profile ")?.strip_suffix(']'))
+    }
+}
+
 /// Markers that do not form well-nested, unique blocks. gac refuses to write until they are
 /// fixed by hand.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

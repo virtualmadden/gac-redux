@@ -60,7 +60,7 @@ pub async fn run(ctx: &Context, args: SyncArgs) -> Result<()> {
         managed_block::upsert(text, name.as_str(), &block).expect("the markers were scanned above");
 
     let before = existing
-        .map(|b| profile_names(&text[b.range.clone()]))
+        .map(|b| b.profile_names(text).map(str::to_owned).collect())
         .unwrap_or_default();
     let after: BTreeSet<String> = kept.iter().map(|p| p.name.to_string()).collect();
     let added = after.difference(&before).count();
@@ -141,12 +141,4 @@ fn unguarded(
         }
     }
     kept
-}
-
-fn profile_names(block: &str) -> BTreeSet<String> {
-    block
-        .lines()
-        .filter_map(|line| line.strip_prefix("[profile ")?.strip_suffix(']'))
-        .map(str::to_owned)
-        .collect()
 }

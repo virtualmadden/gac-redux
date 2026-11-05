@@ -152,7 +152,6 @@ pub async fn obtain(
             .map(|g| (*g).to_owned())
             .collect(),
     };
-    fsx::ensure_private_dir(dir)?;
     fsx::write_atomic(
         &path,
         botocore_json::to_string(&entry).as_bytes(),

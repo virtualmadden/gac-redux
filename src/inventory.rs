@@ -82,9 +82,6 @@ impl Inventory {
         };
         let json =
             serde_json::to_vec_pretty(&snapshot).expect("serializing plain data cannot fail");
-        if let Some(dir) = self.path.parent() {
-            fsx::ensure_private_dir(dir)?;
-        }
         fsx::write_atomic(&self.path, &json, ModePolicy::Private)?;
         Ok(snapshot)
     }
