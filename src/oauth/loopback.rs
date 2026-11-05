@@ -1,6 +1,6 @@
 //! The loopback redirect endpoint for an authorization-code login (RFC 8252). It listens on
-//! IPv4 loopback only, answers the one callback carrying the expected `state`, and gives up after
-//! a timeout.
+//! IPv4 loopback only, answers the one callback carrying the expected `state` (ignoring any
+//! other), and gives up after a timeout.
 
 use std::convert::Infallible;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -70,7 +70,15 @@ impl Loopback {
         loop {
             tokio::select! {
                 accepted = self.listener.accept() => {
-                    let Ok((stream, _)) = accepted else { continue };
+                    let stream = match accepted {
+                        Ok((stream, _)) => stream,
+                        Err(err) => {
+                            // Persistent errors such as EMFILE would otherwise spin this loop.
+                            tracing::debug!("accept failed: {err}");
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            continue;
+                        }
+                    };
                     let handler = Handler {
                         path: path.to_owned(),
                         state: state.to_owned(),
@@ -134,15 +142,13 @@ impl Handler {
                 _ => {}
             }
         }
-        let (status, body, outcome) = if state.as_deref() != Some(self.state.as_str()) {
-            (
-                StatusCode::BAD_REQUEST,
-                PAGE_FAILED,
-                Err(Error::login(
-                    "the sign-in redirect carried the wrong state; the login was abandoned",
-                )),
-            )
-        } else if let Some(error) = error {
+        if state.as_deref() != Some(self.state.as_str()) {
+            // Not this login's redirect (a prefetch, a reload, another local process): answer it
+            // and keep waiting, so a stray request cannot end the login.
+            tracing::debug!("ignored a callback without the expected state");
+            return page(StatusCode::BAD_REQUEST, PAGE_FAILED);
+        }
+        let (status, body, outcome) = if let Some(error) = error {
             let detail = description.map(|d| format!(": {d}")).unwrap_or_default();
             (
                 StatusCode::OK,
@@ -220,17 +226,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_a_wrong_state() {
+    async fn ignores_callbacks_without_the_expected_state() {
         let loopback = Loopback::bind(None).await.unwrap();
         let port = loopback.port;
         let waiter = tokio::spawn(loopback.wait_for_code("/cb", "s1", Duration::from_secs(10)));
-        assert!(
-            get(port, "/cb?code=abc&state=evil")
-                .await
-                .starts_with("HTTP/1.1 400")
-        );
-        let err = waiter.await.unwrap().unwrap_err();
-        assert!(err.to_string().contains("wrong state"), "{err}");
+        // A prefetch, a reloaded bookmark or another local process must not end the login.
+        for stray in ["/cb", "/cb?code=abc&state=evil", "/cb?error=access_denied"] {
+            assert!(get(port, stray).await.starts_with("HTTP/1.1 400"), "{stray}");
+        }
+        assert!(!waiter.is_finished());
+        assert!(get(port, "/cb?code=abc&state=s1").await.starts_with("HTTP/1.1 200"));
+        let code = waiter.await.unwrap().unwrap();
+        assert_eq!(code.expose_secret(), "abc");
     }
 
     #[tokio::test]
