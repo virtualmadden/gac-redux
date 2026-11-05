@@ -21,7 +21,10 @@ const INVENTORY_TTL: SignedDuration = SignedDuration::from_hours(1);
 #[derive(Debug)]
 pub struct Context {
     pub paths: AwsPaths,
+    /// `--session`, from the command line.
     session: Option<SessionName>,
+    /// `GAC_SESSION`: like `--session`, except that `--profile` wins over it.
+    env_session: Option<SessionName>,
     no_input: bool,
 }
 
@@ -30,12 +33,18 @@ impl Context {
         Ok(Self {
             paths: AwsPaths::from_env()?,
             session: session.map(str::parse).transpose()?,
+            env_session: std::env::var("GAC_SESSION")
+                .ok()
+                .filter(|v| !v.is_empty())
+                .map(|v| v.parse())
+                .transpose()?,
             no_input,
         })
     }
 
+    /// `--session`, else `GAC_SESSION`.
     pub fn session_flag(&self) -> Option<&SessionName> {
-        self.session.as_ref()
+        self.session.as_ref().or(self.env_session.as_ref())
     }
 
     pub fn can_prompt(&self) -> bool {
@@ -110,14 +119,17 @@ impl Context {
         inventory.store(&scope, accounts, Timestamp::now())
     }
 
-    /// The session a command acts on: `--session`, else the session of `--profile`, else the
-    /// only configured session.
+    /// The session a command acts on: `--session`, else the session of `--profile`, else
+    /// `GAC_SESSION`, else the only configured session.
     pub fn resolve_session(&self, files: &AwsFiles, profile: Option<&str>) -> Result<Session> {
         if let Some(name) = &self.session {
             return Ok(files.sso_session(name)?.into());
         }
         if let Some(profile) = profile {
             return session_of_profile(files, profile);
+        }
+        if let Some(name) = &self.env_session {
+            return Ok(files.sso_session(name)?.into());
         }
         match files.session_names().as_slice() {
             [] => Err(

@@ -296,6 +296,37 @@ fn several_sessions_need_a_choice() {
 }
 
 #[test]
+fn an_exported_gac_session_yields_to_profile_and_all() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config(&format!(
+        "{SESSION}\n[sso-session other]\nsso_start_url = https://other.awsapps.com/start\nsso_region = us-east-1\n\n[profile dev]\nsso_session = corp\nsso_account_id = 111122223333\nsso_role_name = ReadOnly\n"
+    ));
+    sandbox
+        .gac()
+        .env("GAC_SESSION", "other")
+        .args(["login", "--device-code", "--no-browser", "--profile", "dev"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Logged in to session `corp`"));
+    assert!(sandbox.token_path("corp").exists());
+    sandbox
+        .gac()
+        .env("GAC_SESSION", "other")
+        .args(["logout", "--all"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Logged out of session `corp`."));
+    assert!(!sandbox.token_path("corp").exists());
+    // A --session typed on the command line still conflicts.
+    sandbox
+        .gac()
+        .args(["login", "--session", "other", "--profile", "dev"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("cannot be used with"));
+}
+
+#[test]
 fn list_uses_the_inventory_cache() {
     let sandbox = Sandbox::with_session();
     login_device(&sandbox);

@@ -33,15 +33,13 @@ const GLOBAL: &str = "Global options";
     max_term_width = 100
 )]
 pub struct Cli {
-    /// The [sso-session] to use; needed only when more than one is configured.
-    #[arg(
-        long,
-        global = true,
-        env = "GAC_SESSION",
-        hide_env_values = true,
-        value_name = "NAME",
-        help_heading = GLOBAL
-    )]
+    /// The [sso-session] to use; needed only when more than one is configured
+    ///
+    /// [env: GAC_SESSION]
+    // Context reads GAC_SESSION, not clap: clap counts an env value as the flag being given, so
+    // --profile and --all would conflict with an exported GAC_SESSION.
+    #[arg(long, global = true, value_name = "NAME", help_heading = GLOBAL)]
+    #[allow(clippy::doc_markdown)] // this is --help text, where backticks would show
     session: Option<String>,
 
     /// Never prompt; fail with a hint instead.
