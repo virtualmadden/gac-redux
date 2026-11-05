@@ -246,7 +246,11 @@ fn describe_token(token: &TokenStatus, now: Timestamp) -> String {
         ""
     };
     match (token.state, left) {
-        ("expired", _) => format!("expired at {expires_at}{refresh}"),
+        // Only the service knows whether the refresh token outlived the portal session.
+        ("expired", _) if token.refreshable => {
+            format!("expired at {expires_at}; the next use tries a refresh")
+        }
+        ("expired", _) => format!("expired at {expires_at}"),
         (_, Some(left)) => format!("valid until {expires_at} ({} left){refresh}", human(left)),
         _ => format!("valid until {expires_at}{refresh}"),
     }

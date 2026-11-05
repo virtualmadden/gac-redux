@@ -211,6 +211,12 @@ pub async fn usable_token(store: &impl TokenStore, session: &Session) -> Result<
             tracing::debug!(expires_at = %refreshed.expires_at, "refreshed the SSO token");
             Ok(refreshed)
         }
+        Err(err) if token.state(now) == TokenState::Expired => {
+            Err(session.login_required(format!(
+                "the SSO token expired at {} and could not be refreshed: {err}",
+                token.expires_at
+            )))
+        }
         Err(err) => {
             tracing::warn!("could not refresh the SSO token: {err}");
             usable(token, session, now)
