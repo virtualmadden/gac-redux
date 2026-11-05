@@ -1,4 +1,5 @@
-//! `gac logout`: `sso:Logout`, then delete the cached token.
+//! `gac logout`: `sso:Logout`, delete the cached token, then sweep the AWS CLI's cached SSO role
+//! credentials.
 
 use crate::auth::{self, LogoutOutcome, Session};
 use crate::cli::LogoutArgs;
@@ -52,6 +53,17 @@ pub async fn run(ctx: &Context, args: LogoutArgs) -> Result<()> {
             LogoutOutcome::NotLoggedIn => format!("{label} was not logged in."),
         };
         ui::notice(capitalize(&message));
+    }
+    let swept = auth::sweep_role_credentials(&ctx.paths.cli_cache_dir())?;
+    if swept > 0 {
+        let noun = if swept == 1 {
+            "credential"
+        } else {
+            "credentials"
+        };
+        ui::notice(format!(
+            "Deleted {swept} role {noun} the AWS CLI had cached from SSO tokens, for every session, as `aws sso logout` does."
+        ));
     }
     if unusable.is_empty() {
         return Ok(());

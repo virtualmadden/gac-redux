@@ -57,6 +57,11 @@ impl AwsPaths {
         self.home.join(".aws").join("sso").join("cache")
     }
 
+    /// `~/.aws/cli/cache`, where the AWS CLI caches the role credentials it fetches.
+    pub fn cli_cache_dir(&self) -> PathBuf {
+        self.home.join(".aws").join("cli").join("cache")
+    }
+
     /// `~/.aws/gac`, gac's own state (0700).
     pub fn state_dir(&self) -> PathBuf {
         self.home.join(".aws").join(STATE_DIR_NAME)

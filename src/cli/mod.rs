@@ -67,7 +67,7 @@ enum Command {
     Setup(SetupArgs),
     /// Sign in to IAM Identity Center and write the shared token cache.
     Login(LoginArgs),
-    /// Revoke the session and delete its cached token.
+    /// Revoke the session, delete its cached token and the AWS CLI's SSO role credentials.
     Logout(LogoutArgs),
     /// Show sessions, token and registration expiry, and managed blocks. No secrets.
     Status(StatusArgs),

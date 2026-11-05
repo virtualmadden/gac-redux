@@ -751,6 +751,40 @@ fn logout_revokes_and_deletes_the_token() {
 }
 
 #[test]
+fn logout_sweeps_the_aws_clis_sso_role_credentials_like_aws_sso_logout() {
+    let sandbox = Sandbox::with_session();
+    login_device(&sandbox);
+    let cache = sandbox.home().join(".aws/cli/cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    let sso = json!({"ProviderType": "sso", "Credentials": {"AccessKeyId": "ASIAMOCK"}});
+    std::fs::write(cache.join("this-session.json"), sso.to_string()).unwrap();
+    std::fs::write(cache.join("other-session.json"), sso.to_string()).unwrap();
+    let assume_role = json!({"ProviderType": "assume-role", "Credentials": {}});
+    std::fs::write(cache.join("assume-role.json"), assume_role.to_string()).unwrap();
+    std::fs::write(cache.join("session.db"), "SQLite format 3\0").unwrap();
+
+    sandbox
+        .gac()
+        .arg("logout")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Deleted 2 role credentials the AWS CLI had cached from SSO tokens",
+        ));
+    assert!(!cache.join("this-session.json").exists());
+    assert!(!cache.join("other-session.json").exists());
+    assert!(cache.join("assume-role.json").exists());
+    assert!(cache.join("session.db").exists());
+
+    sandbox
+        .gac()
+        .arg("logout")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Deleted").not());
+}
+
+#[test]
 fn logout_owns_up_to_an_unreadable_token() {
     let sandbox = Sandbox::with_session();
     sandbox.write_token(
