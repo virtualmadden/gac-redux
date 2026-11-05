@@ -1,6 +1,7 @@
 //! Reads `~/.aws/config` and `~/.aws/credentials` with the SDK's own parser, so profile and
 //! section semantics match the SDKs exactly. The two files are parsed separately: the SDK merges
-//! same-named profiles across them, and the T5 guard needs to know which file a key came from.
+//! same-named profiles across them, and the mixed-credentials guard needs to know which file a
+//! key came from.
 
 use aws_config::profile::{Profile, ProfileSet};
 use aws_runtime::env_config::file::{EnvConfigFileKind, EnvConfigFiles};

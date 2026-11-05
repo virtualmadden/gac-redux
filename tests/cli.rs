@@ -627,7 +627,7 @@ fn sync_remembers_its_settings_in_the_begin_line() {
 }
 
 #[test]
-fn sync_never_creates_the_t5_layout() {
+fn sync_never_creates_mixed_credentials() {
     let sandbox = Sandbox::with_session();
     sandbox.write_config(&format!(
         "{SESSION}\n[profile sandbox/ReadOnly]\nregion = us-east-1\n"
@@ -642,7 +642,7 @@ fn sync_never_creates_the_t5_layout() {
         .stderr(predicate::str::contains(
             "skipped profile `payments-prod/ReadOnly`",
         ))
-        .stderr(predicate::str::contains("(T5)"))
+        .stderr(predicate::str::contains("would hide its keys"))
         .stderr(predicate::str::contains(
             "skipped profile `sandbox/ReadOnly`",
         ));
@@ -658,7 +658,7 @@ fn sync_never_creates_the_t5_layout() {
         .gac()
         .arg("doctor")
         .assert()
-        .stdout(predicate::str::contains("[ok] t5"));
+        .stdout(predicate::str::contains("[ok] mixed-credentials"));
 }
 
 #[test]
@@ -822,7 +822,7 @@ fn doctor_flags_problems_with_fixes() {
     let output = sandbox.gac().arg("doctor").assert().code(1);
     let report = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
     assert!(
-        report.contains("[FAIL] t5: profile `dev` has static keys"),
+        report.contains("[FAIL] mixed-credentials: profile `dev` has static keys"),
         "{report}"
     );
     assert!(report.contains("fix: delete the [dev] section"));
@@ -841,7 +841,7 @@ fn doctor_flags_problems_with_fixes() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|f| f["check"] == "t5" && f["level"] == "fail")
+            .any(|f| f["check"] == "mixed-credentials" && f["level"] == "fail")
     );
 }
 

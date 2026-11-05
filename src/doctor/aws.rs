@@ -34,7 +34,7 @@ pub fn run(inputs: &Inputs<'_>) -> Report {
             } else {
                 report.ok("config", format!("{} does not exist yet", config.display()));
             }
-            check_t5(&mut report, inputs.paths, files);
+            check_mixed_credentials(&mut report, inputs.paths, files);
             check_sessions(&mut report, inputs, files);
             check_legacy(&mut report, files);
             check_blocks(&mut report, files);
@@ -125,17 +125,17 @@ fn json_files(dir: &Path) -> Vec<std::path::PathBuf> {
     files
 }
 
-fn check_t5(report: &mut Report, paths: &AwsPaths, files: &AwsFiles) {
+fn check_mixed_credentials(report: &mut Report, paths: &AwsPaths, files: &AwsFiles) {
     let collisions = guards::collisions(files);
     if collisions.is_empty() {
         report.ok(
-            "t5",
+            "mixed-credentials",
             "no profile mixes static keys with SSO, process or role settings",
         );
     }
     for collision in collisions {
         report.fail(
-            "t5",
+            "mixed-credentials",
             format!(
                 "profile `{name}` has static keys in {creds}, but its config section sets {key}; the SDKs ignore the keys, and with no SSO token every lookup fails",
                 name = collision.profile,
@@ -280,7 +280,7 @@ mod tests {
     use crate::doctor::Level;
 
     #[tokio::test]
-    async fn flags_t5_legacy_and_orphaned_blocks() {
+    async fn flags_mixed_credentials_legacy_and_orphaned_blocks() {
         let home = tempfile::tempdir().unwrap();
         let paths = AwsPaths::from_vars(|name| {
             (name == "HOME" || name == "USERPROFILE").then(|| home.path().into())
@@ -318,7 +318,10 @@ sso_region = us-east-1
                 .find(|f| f.check == check && f.message.contains(needle))
                 .map(|f| f.level)
         };
-        assert_eq!(level_of("t5", "profile `dev`"), Some(Level::Fail));
+        assert_eq!(
+            level_of("mixed-credentials", "profile `dev`"),
+            Some(Level::Fail)
+        );
         assert_eq!(
             level_of("sessions", "no sso_registration_scopes"),
             Some(Level::Warn)

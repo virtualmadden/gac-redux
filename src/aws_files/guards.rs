@@ -1,7 +1,7 @@
-//! The T5 rule. botocore and the Rust SDK resolve SSO, process and role settings before static
-//! keys in the same profile: with a token the keys are silently ignored, and without one the
-//! lookup fails hard even though valid keys are in the file. So static keys and resolving
-//! settings must never share a profile name, and gac must never create that layout.
+//! The mixed-credentials rule. botocore and the Rust SDK resolve SSO, process and role settings
+//! before static keys in the same profile: with a token the keys are silently ignored, and
+//! without one the lookup fails hard even though valid keys are in the file. So static keys and
+//! resolving settings must never share a profile name, and gac must never create that layout.
 
 use aws_config::profile::Profile;
 
@@ -31,7 +31,7 @@ pub fn has_static_keys(profile: &Profile) -> bool {
     STATIC_KEYS.iter().any(|key| profile.get(key).is_some())
 }
 
-/// A profile that has the T5 layout today: static keys in the credentials file under a name
+/// A profile that mixes credentials today: static keys in the credentials file under a name
 /// whose config section resolves through something else.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Collision {
@@ -58,7 +58,7 @@ pub fn collisions(files: &AwsFiles) -> Vec<Collision> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NameConflict {
     /// The credentials file has a section with this name. Writing an SSO profile would create
-    /// the T5 layout when it holds keys, and a confusing merge when it does not.
+    /// mixed credentials when it holds keys, and a confusing merge when it does not.
     CredentialsSection,
     /// The config file already defines this profile outside the block being written.
     ConfigProfile,
@@ -68,7 +68,7 @@ impl NameConflict {
     pub fn describe(self) -> &'static str {
         match self {
             Self::CredentialsSection => {
-                "the credentials file has a section with this name; an SSO profile there would hide its keys (T5)"
+                "the credentials file has a section with this name; an SSO profile there would hide its keys"
             }
             Self::ConfigProfile => {
                 "the config file already defines this profile outside this block"
@@ -98,7 +98,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn finds_the_t5_layout() {
+    async fn finds_mixed_credentials() {
         let config = "\
 [profile dev]
 sso_session = corp
