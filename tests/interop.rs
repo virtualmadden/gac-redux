@@ -4,7 +4,8 @@
 //! - The AWS CLI and aws-config read the token cache gac writes, and refresh it in place.
 //! - gac consumes caches written by `aws sso login`, with either flow.
 //! - Profiles written by `gac sync` resolve in both.
-//! - `aws sso logout` sweeps gac's token.
+//! - `aws sso logout` sweeps gac's token, and `gac logout` sweeps the CLI's cached role
+//!   credentials.
 //!
 //! The AWS CLI tests skip when `aws` is not installed, unless `GAC_REQUIRE_AWS_CLI` is set (CI).
 
@@ -286,6 +287,25 @@ fn aws_sso_logout_sweeps_the_token_gac_wrote() {
         .assert()
         .success()
         .stdout(predicates::str::contains("not logged in"));
+}
+
+#[test]
+fn gac_logout_stops_the_aws_cli_like_aws_sso_logout() {
+    let sandbox = sandbox_with_dev();
+    gac_login(&sandbox);
+    let Some(creds) = aws_export(&sandbox, "dev") else {
+        return;
+    };
+    assert!(creds["AccessKeyId"].is_string());
+    sandbox.gac().arg("logout").assert().success();
+    let mut aws = sandbox.aws().unwrap();
+    aws.args(["configure", "export-credentials", "--profile", "dev"]);
+    let output = aws.output().unwrap();
+    assert!(
+        !output.status.success(),
+        "the AWS CLI still served cached role credentials after gac logout:\n{}",
+        stdout(&output)
+    );
 }
 
 /// Resolves `profile` with aws-config in a child process whose HOME is the sandbox. The child is

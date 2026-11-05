@@ -627,7 +627,7 @@ fn sync_remembers_its_settings_in_the_begin_line() {
 }
 
 #[test]
-fn sync_never_creates_the_t5_layout() {
+fn sync_never_creates_mixed_credentials() {
     let sandbox = Sandbox::with_session();
     sandbox.write_config(&format!(
         "{SESSION}\n[profile sandbox/ReadOnly]\nregion = us-east-1\n"
@@ -642,7 +642,7 @@ fn sync_never_creates_the_t5_layout() {
         .stderr(predicate::str::contains(
             "skipped profile `payments-prod/ReadOnly`",
         ))
-        .stderr(predicate::str::contains("(T5)"))
+        .stderr(predicate::str::contains("would hide its keys"))
         .stderr(predicate::str::contains(
             "skipped profile `sandbox/ReadOnly`",
         ));
@@ -658,7 +658,7 @@ fn sync_never_creates_the_t5_layout() {
         .gac()
         .arg("doctor")
         .assert()
-        .stdout(predicate::str::contains("[ok] t5"));
+        .stdout(predicate::str::contains("[ok] mixed-credentials"));
 }
 
 #[test]
@@ -751,6 +751,40 @@ fn logout_revokes_and_deletes_the_token() {
 }
 
 #[test]
+fn logout_sweeps_the_aws_clis_sso_role_credentials_like_aws_sso_logout() {
+    let sandbox = Sandbox::with_session();
+    login_device(&sandbox);
+    let cache = sandbox.home().join(".aws/cli/cache");
+    std::fs::create_dir_all(&cache).unwrap();
+    let sso = json!({"ProviderType": "sso", "Credentials": {"AccessKeyId": "ASIAMOCK"}});
+    std::fs::write(cache.join("this-session.json"), sso.to_string()).unwrap();
+    std::fs::write(cache.join("other-session.json"), sso.to_string()).unwrap();
+    let assume_role = json!({"ProviderType": "assume-role", "Credentials": {}});
+    std::fs::write(cache.join("assume-role.json"), assume_role.to_string()).unwrap();
+    std::fs::write(cache.join("session.db"), "SQLite format 3\0").unwrap();
+
+    sandbox
+        .gac()
+        .arg("logout")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "Deleted 2 role credentials the AWS CLI had cached from SSO tokens",
+        ));
+    assert!(!cache.join("this-session.json").exists());
+    assert!(!cache.join("other-session.json").exists());
+    assert!(cache.join("assume-role.json").exists());
+    assert!(cache.join("session.db").exists());
+
+    sandbox
+        .gac()
+        .arg("logout")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Deleted").not());
+}
+
+#[test]
 fn logout_owns_up_to_an_unreadable_token() {
     let sandbox = Sandbox::with_session();
     sandbox.write_token(
@@ -822,7 +856,7 @@ fn doctor_flags_problems_with_fixes() {
     let output = sandbox.gac().arg("doctor").assert().code(1);
     let report = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
     assert!(
-        report.contains("[FAIL] t5: profile `dev` has static keys"),
+        report.contains("[FAIL] mixed-credentials: profile `dev` has static keys"),
         "{report}"
     );
     assert!(report.contains("fix: delete the [dev] section"));
@@ -841,7 +875,7 @@ fn doctor_flags_problems_with_fixes() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|f| f["check"] == "t5" && f["level"] == "fail")
+            .any(|f| f["check"] == "mixed-credentials" && f["level"] == "fail")
     );
 }
 

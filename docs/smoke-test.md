@@ -26,7 +26,7 @@ awsx() { HOME="$SMOKE" USERPROFILE="$SMOKE" aws "$@"; }
    `awsx sts get-caller-identity --profile '<account>/<role>'` returns your assumed-role ARN.
 7. **Doctor.** `gac doctor` reports no `FAIL`.
 8. **Logout.** `gac logout` prints ``Logged out of session `smoke`. ``; `gac status` shows
-   `not logged in` and `gac list --refresh` exits with code 3. (The AWS CLI may keep serving role
-   credentials it cached in `~/.aws/cli/cache` until they expire; `aws sso logout` clears those.)
+   `not logged in`, `gac list --refresh` exits with code 3, and the `awsx sts get-caller-identity`
+   call from step 6 now fails: the role credentials the AWS CLI cached are gone too.
 
 Clean up with `rm -rf "$SMOKE"`.

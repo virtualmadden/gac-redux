@@ -122,7 +122,7 @@ fn settings(existing: Option<&Block>, args: &SyncArgs) -> Result<SyncSettings> {
     Ok(settings)
 }
 
-/// Drops, with a warning, every profile whose name would create the T5 layout or shadow a
+/// Drops, with a warning, every profile whose name would mix static keys with SSO or shadow a
 /// profile the user (or another block) owns. `outside` is the config without this block.
 fn unguarded(
     planned: Vec<PlannedProfile>,

@@ -2,7 +2,7 @@
 source: tests/cli.rs
 expression: "String::from_utf8_lossy(&help.get_output().stdout)"
 ---
-Revoke the session and delete its cached token
+Revoke the session, delete its cached token and the AWS CLI's SSO role credentials
 
 Usage: gac logout [OPTIONS]
 

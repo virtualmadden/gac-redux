@@ -12,7 +12,7 @@ Usage: gac [OPTIONS] <COMMAND>
 Commands:
   setup   Create an [sso-session], or reuse one `aws configure sso` already wrote
   login   Sign in to IAM Identity Center and write the shared token cache
-  logout  Revoke the session and delete its cached token
+  logout  Revoke the session, delete its cached token and the AWS CLI's SSO role credentials
   status  Show sessions, token and registration expiry, and managed blocks. No secrets
   sync    Write native sso-session profiles for your accounts and roles into a managed block
   list    List the accounts and roles you can use

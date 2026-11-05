@@ -8,6 +8,7 @@ mod pkce;
 pub mod registration;
 pub mod token;
 
+use std::io;
 use std::path::Path;
 use std::time::Duration;
 
@@ -16,6 +17,7 @@ use jiff::Timestamp;
 use crate::aws_files::{LegacySsoProfile, SsoSessionConfig};
 use crate::domain::{Region, SessionName, StartUrl};
 use crate::error::{Error, Result};
+use crate::fsx;
 use crate::portal::Portal;
 use crate::secret;
 use oidc::{ClientCredentials, Oidc, TokenGrant};
@@ -292,4 +294,33 @@ pub async fn logout(store: &impl TokenStore, session: &Session) -> Result<Logout
     };
     store.delete(key)?;
     Ok(outcome)
+}
+
+/// Deletes the role credentials the AWS CLI cached from SSO tokens, as `aws sso logout` does:
+/// every file in `dir` whose JSON has `"ProviderType": "sso"`, whichever session fetched it.
+/// Deleting the entry of a session that is still logged in only costs it one
+/// `GetRoleCredentials` call. Anything else (assume-role entries, the CLI's `session.db`) is left
+/// alone. Returns how many files were deleted.
+pub fn sweep_role_credentials(dir: &Path) -> Result<usize> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(0),
+        Err(err) => return Err(Error::io_at("read", dir, err)),
+    };
+    let mut deleted = 0;
+    for entry in entries {
+        let path = entry.map_err(|err| Error::io_at("read", dir, err))?.path();
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let Ok(contents) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue;
+        };
+        if contents.get("ProviderType").and_then(|v| v.as_str()) == Some("sso")
+            && fsx::remove_if_exists(&path)?
+        {
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
 }
