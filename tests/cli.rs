@@ -55,6 +55,92 @@ fn subcommand_help_lists_gac_session_inline() {
     insta::assert_snapshot!(String::from_utf8_lossy(&help.get_output().stdout));
 }
 
+#[test]
+fn completions_print_a_script_for_every_shell_without_reading_the_aws_files() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config("[profile broken\n");
+    for shell in ["bash", "elvish", "fish", "powershell", "zsh"] {
+        let output = sandbox.gac().args(["completions", shell]).output().unwrap();
+        assert!(output.status.success(), "{shell}: {}", stderr(&output));
+        let script = stdout(&output);
+        for word in ["gac", "select", "session", "dry-run"] {
+            assert!(script.contains(word), "{shell}: no `{word}` in the script");
+        }
+        // Check the syntax with the shell itself where it is installed; bash always is on Unix.
+        let check = match shell {
+            "bash" | "zsh" => Some(vec![shell, "-n"]),
+            "fish" => Some(vec!["fish", "--no-execute"]),
+            _ => None,
+        };
+        let Some(check) = check else { continue };
+        let script_path = sandbox.home().join(format!("gac.{shell}"));
+        std::fs::write(&script_path, &script).unwrap();
+        match std::process::Command::new(check[0])
+            .args(&check[1..])
+            .arg(&script_path)
+            .output()
+        {
+            Ok(result) => assert!(
+                result.status.success(),
+                "{shell} rejects the script: {}",
+                String::from_utf8_lossy(&result.stderr)
+            ),
+            Err(err) if cfg!(unix) && shell == "bash" => panic!("cannot run bash: {err}"),
+            Err(_) => {}
+        }
+    }
+    sandbox.gac().args(["completions", "tcsh"]).assert().code(2);
+}
+
+#[test]
+fn man_writes_a_page_per_command() {
+    let sandbox = Sandbox::new();
+    let dir = sandbox.home().join("man");
+    sandbox
+        .gac()
+        .arg("man")
+        .arg(&dir)
+        .assert()
+        .success()
+        .stdout("");
+    let mut pages: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    pages.sort();
+    assert_eq!(
+        pages,
+        [
+            "gac-completions.1",
+            "gac-doctor.1",
+            "gac-list.1",
+            "gac-login.1",
+            "gac-logout.1",
+            "gac-select.1",
+            "gac-setup.1",
+            "gac-status.1",
+            "gac-sync.1",
+            "gac.1"
+        ]
+    );
+    let root = std::fs::read_to_string(dir.join("gac.1")).unwrap();
+    let version = format!("\"gac-redux {}\"", env!("CARGO_PKG_VERSION"));
+    for needle in [
+        ".TH gac 1",
+        "gac\\-sync(1)",
+        ".SH ENVIRONMENT",
+        "GAC_REDUX_SESSION",
+        ".SH FILES",
+        ".SH \"EXIT STATUS\"",
+        &version,
+    ] {
+        assert!(root.contains(needle), "no `{needle}` in gac.1:\n{root}");
+    }
+    let sync = std::fs::read_to_string(dir.join("gac-sync.1")).unwrap();
+    assert!(sync.contains("\\-\\-dry\\-run"), "{sync}");
+    assert!(sync.contains(&version), "{sync}");
+}
+
 /// The block `gac setup` writes for the `corp` session.
 const SETUP_BLOCK: &str = "\
 # BEGIN gac-redux sync session=corp

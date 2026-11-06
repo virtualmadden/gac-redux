@@ -10,15 +10,16 @@ role assignments, and shares its token cache with the AWS CLI and SDKs.
 Usage: gac [OPTIONS] <COMMAND>
 
 Commands:
-  setup   Create an [sso-session], or reuse one `aws configure sso` already wrote
-  login   Sign in to IAM Identity Center and write the shared token cache
-  logout  Revoke the session, delete its cached token and the AWS CLI's SSO role credentials
-  select  Pick the account and role of the [default] profile from a list
-  status  Show sessions, token and registration expiry, and managed blocks. No secrets
-  sync    Write native sso-session profiles for your accounts and roles into a managed block
-  list    List the accounts and roles you can use
-  doctor  Check the AWS files and caches for problems, with a fix for each. Read-only
-  help    Print this message or the help of the given subcommand(s)
+  setup        Create an [sso-session], or reuse one `aws configure sso` already wrote
+  login        Sign in to IAM Identity Center and write the shared token cache
+  logout       Revoke the session, delete its cached token and the AWS CLI's SSO role credentials
+  select       Pick the account and role of the [default] profile from a list
+  status       Show sessions, token and registration expiry, and managed blocks. No secrets
+  sync         Write native sso-session profiles for your accounts and roles into a managed block
+  list         List the accounts and roles you can use
+  doctor       Check the AWS files and caches for problems, with a fix for each. Read-only
+  completions  Print a shell completion script, e.g. `source <(gac completions zsh)`
+  help         Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help
