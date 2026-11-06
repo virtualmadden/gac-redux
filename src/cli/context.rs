@@ -25,8 +25,6 @@ pub struct Context {
     session: Option<SessionName>,
     /// `GAC_REDUX_SESSION`: like `--session`, except that `--profile` wins over it.
     env_session: Option<SessionName>,
-    /// The default session `gac select` saved.
-    selected: Option<SessionName>,
     no_input: bool,
 }
 
@@ -34,7 +32,6 @@ impl Context {
     pub fn new(session: Option<&str>, no_input: bool) -> Result<Self> {
         let paths = AwsPaths::from_env()?;
         paths.migrate_legacy_state_dir();
-        let selected = read_selected(&selected_path(&paths));
         Ok(Self {
             paths,
             session: session.map(str::parse).transpose()?,
@@ -43,7 +40,6 @@ impl Context {
                 .filter(|v| !v.is_empty())
                 .map(|v| v.parse())
                 .transpose()?,
-            selected,
             no_input,
         })
     }
@@ -56,23 +52,6 @@ impl Context {
     /// `GAC_REDUX_SESSION`.
     pub fn env_session(&self) -> Option<&SessionName> {
         self.env_session.as_ref()
-    }
-
-    /// The default session `gac select` saved, whether or not it is still configured.
-    pub fn selected(&self) -> Option<&SessionName> {
-        self.selected.as_ref()
-    }
-
-    /// Saves `name` as the default session, or forgets the default with `None`.
-    pub fn save_selected(&self, name: Option<&SessionName>) -> Result<()> {
-        let path = selected_path(&self.paths);
-        match name {
-            Some(name) => {
-                fsx::ensure_private_dir(&self.paths.state_dir())?;
-                fsx::write_atomic(&path, format!("{name}\n").as_bytes(), ModePolicy::Private)
-            }
-            None => fsx::remove_if_exists(&path).map(drop),
-        }
     }
 
     /// `--session`, else `GAC_REDUX_SESSION`.
@@ -153,7 +132,8 @@ impl Context {
     }
 
     /// The session a command acts on: `--session`, else the session of `--profile`, else
-    /// `GAC_REDUX_SESSION`, else the default `gac select` saved, else the only configured session.
+    /// `GAC_REDUX_SESSION`, else the session of the `[default]` profile, else the only configured
+    /// session.
     pub fn resolve_session(&self, files: &AwsFiles, profile: Option<&str>) -> Result<Session> {
         if let Some(name) = &self.session {
             return Ok(files.sso_session(name)?.into());
@@ -164,12 +144,12 @@ impl Context {
         if let Some(name) = &self.env_session {
             return Ok(files.sso_session(name)?.into());
         }
-        if let Some(name) = &self.selected {
-            if files.has_session(name.as_str()) {
-                return Ok(files.sso_session(name)?.into());
+        if let Some(name) = default_session(files) {
+            if files.has_session(name) {
+                return Ok(files.sso_session(&name.parse()?)?.into());
             }
             ui::warn(format!(
-                "ignoring the default session `{name}`: it is no longer configured (run `gac select`)"
+                "ignoring the [default] profile's session `{name}`: there is no [sso-session {name}]"
             ));
         }
         match files.session_names().as_slice() {
@@ -182,26 +162,14 @@ impl Context {
                 "more than one session is configured: {}",
                 many.join(", ")
             ))
-            .with_hint("run `gac select` to pick a default, or pass --session NAME")),
+            .with_hint("run `gac select` to pick a default profile, or pass --session NAME")),
         }
     }
 }
 
-/// Where `gac select` keeps the default session.
-fn selected_path(paths: &AwsPaths) -> std::path::PathBuf {
-    paths.state_dir().join("selected-session")
-}
-
-/// The saved default session. A missing or unreadable file means there is none.
-fn read_selected(path: &std::path::Path) -> Option<SessionName> {
-    let text = fsx::read_text_optional(path).ok().flatten()?;
-    match text.trim().parse() {
-        Ok(name) => Some(name),
-        Err(err) => {
-            tracing::debug!(path = %path.display(), %err, "ignoring an unreadable default session");
-            None
-        }
-    }
+/// The `sso_session` of the `[default]` profile: the session tools use without --profile.
+pub fn default_session(files: &AwsFiles) -> Option<&str> {
+    files.config_profile("default")?.get("sso_session")
 }
 
 fn session_of_profile(files: &AwsFiles, name: &str) -> Result<Session> {

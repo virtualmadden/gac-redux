@@ -1,175 +1,394 @@
-//! `gac select`: pick the default session from a list, or name it with `--session`.
-
-use jiff::Timestamp;
+//! `gac select`: pick the account and role of the `[default]` profile, which the AWS CLI and SDKs
+//! use when no profile is named.
 
 use crate::auth::Session;
-use crate::aws_files::AwsFiles;
+use crate::aws_files::default_block::{
+    self, ACCOUNT_KEY, DefaultError, Found, ROLE_KEY, SESSION_KEY, Section,
+};
+use crate::aws_files::{AwsFiles, managed_block};
 use crate::cli::SelectArgs;
 use crate::cli::context::Context;
-use crate::cli::status::token_summary;
-use crate::domain::SessionName;
+use crate::domain::{RoleName, SessionName};
 use crate::error::{Error, Result};
+use crate::portal::Account;
+use crate::profiles::{self, SyncSettings};
 use crate::ui;
 
+/// One account and role a session can use.
+#[derive(Debug, Clone)]
+struct Row {
+    session: SessionName,
+    account: Account,
+    role: RoleName,
+}
+
+impl Row {
+    fn label(&self) -> String {
+        format!("{}/{}", self.account.name, self.role)
+    }
+}
+
 pub async fn run(ctx: &Context, args: SelectArgs) -> Result<()> {
+    let files = ctx.files().await?;
+    let text = files.config_text();
+    let found = default_block::find(text).map_err(|err| broken(ctx, &err))?;
     if args.clear {
-        ctx.save_selected(None)?;
-        ui::notice("Cleared the default session.");
+        return clear(ctx, text, found).await;
+    }
+
+    let rows = rows(ctx, &files).await?;
+    let current = match &found {
+        Found::Managed(section) | Found::HandWritten(section) => Some(section),
+        Found::Absent => None,
+    };
+    let chosen = if let Some(target) = &args.target {
+        find_target(&rows, target)?
+    } else {
+        if !ctx.can_prompt() {
+            return Err(
+                Error::usage("gac select needs an interactive terminal to show the list")
+                    .with_hint("pass ACCOUNT/ROLE, e.g. `gac select payments-prod/ReadOnly`"),
+            );
+        }
+        pick(&rows, current)?
+    };
+
+    if files.credentials_profile("default").is_some() {
+        return Err(Error::config(
+            "the credentials file has a [default] section; an SSO [default] in the config file would hide its keys",
+        )
+        .with_hint(format!(
+            "move the keys in {} to another profile name, then run gac select again",
+            ctx.paths.credentials_file().display()
+        )));
+    }
+    let (mut section, range) = match found {
+        Found::Managed(section) => {
+            let range = section.range.clone();
+            (section, Some(range))
+        }
+        Found::HandWritten(section) => {
+            if !adopt(ctx, &args)? {
+                ui::notice("Left [default] as it is. Nothing was written.");
+                return Ok(());
+            }
+            let range = section.range.clone();
+            (section, Some(range))
+        }
+        Found::Absent => (Section::empty(), None),
+    };
+
+    section.set(SESSION_KEY, chosen.session.as_str(), &[]);
+    if section.get("region").is_none()
+        && let Some(region) = sync_region(ctx, &files, &chosen.session)?
+    {
+        section.set("region", region.as_str(), &[SESSION_KEY]);
+    }
+    section.set(
+        ACCOUNT_KEY,
+        chosen.account.id.as_str(),
+        &[SESSION_KEY, "region"],
+    );
+    section.set(ROLE_KEY, chosen.role.as_str(), &[ACCOUNT_KEY]);
+    section.align();
+    write(ctx, text, &section, range).await?;
+
+    ui::notice(format!(
+        "The default profile is now {} (account {}, session `{}`).",
+        chosen.label(),
+        chosen.account.id,
+        chosen.session
+    ));
+    for var in ["AWS_PROFILE", "AWS_DEFAULT_PROFILE"] {
+        if let Some(value) = std::env::var(var).ok().filter(|v| !v.is_empty()) {
+            ui::warn(format!(
+                "{var}={value} is set in this shell and takes precedence over [default]"
+            ));
+        }
+    }
+    if let Some(env) = ctx.env_session().filter(|env| **env != chosen.session) {
+        ui::warn(format!(
+            "GAC_REDUX_SESSION={env} is set, so gac commands still use session `{env}`"
+        ));
+    }
+    Ok(())
+}
+
+/// Takes the account and role out of the default block, leaving the rest of `[default]`.
+async fn clear(ctx: &Context, text: &str, found: Found) -> Result<()> {
+    let Found::Managed(mut section) = found else {
+        ui::notice("gac does not manage [default], so there is nothing to clear.");
+        return Ok(());
+    };
+    if section.get(ACCOUNT_KEY).is_none() && section.get(ROLE_KEY).is_none() {
+        ui::notice("[default] has no account or role. Nothing to clear.");
         return Ok(());
     }
-    let files = ctx.files().await?;
-    let names = files.session_names();
+    section.remove(ACCOUNT_KEY);
+    section.remove(ROLE_KEY);
+    section.align();
+    let range = section.range.clone();
+    write(ctx, text, &section, Some(range)).await?;
+    ui::notice(
+        "Cleared the account and role from [default]: AWS commands now need --profile or AWS_PROFILE.",
+    );
+    Ok(())
+}
+
+/// Renders the section as the default block in place of `range`, or appended, and writes it.
+async fn write(
+    ctx: &Context,
+    text: &str,
+    section: &Section,
+    range: Option<std::ops::Range<usize>>,
+) -> Result<()> {
+    let block = section.render(managed_block::line_ending(text));
+    let updated = match range {
+        Some(range) => format!("{}{block}{}", &text[..range.start], &text[range.end..]),
+        None => managed_block::append(text, &block),
+    };
+    if updated == text {
+        return Ok(());
+    }
+    ctx.write_config(text, &updated).await
+}
+
+/// Whether gac may take over the `[default]` section the user wrote.
+fn adopt(ctx: &Context, args: &SelectArgs) -> Result<bool> {
+    if args.adopt {
+        return Ok(true);
+    }
+    if !ctx.can_prompt() {
+        return Err(
+            Error::usage("the config file has a [default] section that gac did not write")
+                .with_hint("pass --adopt to let gac manage it; its lines are kept"),
+        );
+    }
+    ui::prompt::confirm(
+        "Let gac manage the [default] section you wrote?",
+        "its lines are kept; `gac select --clear` removes the account and role again",
+    )
+}
+
+/// Every account and role of `--session`, or of every session. Sessions that need a login are
+/// skipped with a warning while others can still be listed.
+async fn rows(ctx: &Context, files: &AwsFiles) -> Result<Vec<Row>> {
+    let names: Vec<SessionName> = match ctx.typed_session() {
+        Some(name) => vec![name.clone()],
+        None => files
+            .session_names()
+            .into_iter()
+            .map(str::parse)
+            .collect::<Result<_>>()?,
+    };
     if names.is_empty() {
         return Err(
             Error::config("no [sso-session] is configured in the AWS config file")
                 .with_hint("run `gac setup`"),
         );
     }
-
-    let name = if let Some(name) = ctx.typed_session() {
-        if !files.has_session(name.as_str()) {
-            return Err(
-                Error::config(format!("no [sso-session {name}] in the AWS config file"))
-                    .with_hint(format!("pick one of: {}", names.join(", "))),
-            );
+    let mut rows = Vec::new();
+    let mut needs_login = None;
+    for name in &names {
+        let session = Session::from(files.sso_session(name)?);
+        match ctx.accounts(&session, false).await {
+            Ok(snapshot) => {
+                for account in snapshot.items {
+                    for role in &account.roles {
+                        rows.push(Row {
+                            session: name.clone(),
+                            account: account.clone(),
+                            role: role.clone(),
+                        });
+                    }
+                }
+            }
+            Err(err @ Error::LoginRequired { .. }) if names.len() > 1 => {
+                ui::warn(format!(
+                    "skipping session `{name}`: {err} (run `gac login --session {name}`)"
+                ));
+                needs_login = Some(err);
+            }
+            Err(err) => return Err(err),
         }
-        name.clone()
-    } else {
-        if !ctx.can_prompt() {
-            return Err(
-                Error::usage("gac select needs an interactive terminal to show the list")
-                    .with_hint("pass --session NAME to set the default without the list"),
-            );
-        }
-        pick(ctx, &files, &names)?
-    };
-
-    ctx.save_selected(Some(&name))?;
-    ui::notice(format!("The default session is now `{name}`."));
-    if let Some(env) = ctx.env_session().filter(|env| **env != name) {
-        ui::warn(format!(
-            "GAC_REDUX_SESSION={env} is set and takes precedence over the default; unset it to use `{name}`"
-        ));
     }
-    Ok(())
+    if rows.is_empty() {
+        return Err(needs_login.unwrap_or_else(|| {
+            Error::config("no accounts or roles are assigned to you in IAM Identity Center")
+        }));
+    }
+    Ok(rows)
 }
 
-/// Shows one row per session, with its portal host, region and token state, starting on the current
-/// default.
-fn pick(ctx: &Context, files: &AwsFiles, names: &[&str]) -> Result<SessionName> {
-    let store = ctx.token_store();
-    let now = Timestamp::now();
-    let rows: Vec<[String; 4]> = names
+/// The row `ACCOUNT/ROLE` names, where ACCOUNT is the account name, its profile-name slug or its
+/// id, ignoring case.
+fn find_target(rows: &[Row], target: &str) -> Result<Row> {
+    let wanted = target.to_lowercase();
+    let matches: Vec<&Row> = rows
         .iter()
-        .map(|name| {
-            let config = name
-                .parse()
-                .and_then(|n: SessionName| files.sso_session(&n));
-            match config {
-                Ok(config) => {
-                    let session = Session::from(config);
-                    [
-                        (*name).to_owned(),
-                        portal_host(session.start_url.as_str()),
-                        session.region.to_string(),
-                        token_summary(&store, &session, now),
-                    ]
-                }
-                Err(err) => [
-                    (*name).to_owned(),
-                    err.to_string(),
-                    String::new(),
-                    String::new(),
-                ],
-            }
+        .filter(|row| {
+            let role = row.role.as_str();
+            [
+                row.account.name.clone(),
+                profiles::account_slug(&row.account),
+                row.account.id.to_string(),
+            ]
+            .iter()
+            .any(|account| format!("{account}/{role}").to_lowercase() == wanted)
         })
         .collect();
-    let options = align(&rows, ctx.selected().map(SessionName::as_str));
-    let cursor = ctx
-        .selected()
-        .and_then(|s| names.iter().position(|n| *n == s.as_str()))
-        .unwrap_or(0);
+    match matches.as_slice() {
+        [only] => Ok((*only).clone()),
+        [] => Err(
+            Error::usage(format!("no account and role match `{target}`"))
+                .with_hint("run `gac list` to see them, and pass ACCOUNT/ROLE"),
+        ),
+        many => Err(Error::usage(format!(
+            "`{target}` matches in more than one session: {}",
+            many.iter()
+                .map(|row| row.session.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
+        .with_hint("pass --session NAME as well")),
+    }
+}
+
+/// Shows the rows as `gac list` does, starting on the first, and returns the one chosen.
+fn pick(rows: &[Row], current: Option<&Section>) -> Result<Row> {
+    let current =
+        current.and_then(|s| Some((s.get(SESSION_KEY)?, s.get(ACCOUNT_KEY)?, s.get(ROLE_KEY)?)));
+    let several_sessions = rows.iter().any(|row| row.session != rows[0].session);
+    let cells: Vec<Vec<String>> = rows
+        .iter()
+        .map(|row| {
+            let mut cells = vec![
+                row.account.id.to_string(),
+                row.account.name.clone(),
+                row.role.to_string(),
+            ];
+            if several_sessions {
+                cells.push(row.session.to_string());
+            }
+            let is_current = current.is_some_and(|(session, account, role)| {
+                session == row.session.as_str()
+                    && account == row.account.id.as_str()
+                    && role == row.role.as_str()
+            });
+            cells.push(if is_current { "(default)" } else { "" }.to_owned());
+            cells
+        })
+        .collect();
+    let labels: Vec<String> = rows.iter().map(Row::label).collect();
+    let answers: Vec<&str> = labels.iter().map(String::as_str).collect();
     let index = ui::prompt::select(
-        "Default session:",
-        options,
-        names,
-        cursor,
+        "Default profile:",
+        align(&cells),
+        &answers,
+        0,
         "↑↓ to move, type to filter, enter to choose, esc to cancel",
     )?;
-    names[index].parse()
+    Ok(rows[index].clone())
 }
 
-/// The host of a start URL, which names the portal in fewer columns than the whole URL.
-fn portal_host(start_url: &str) -> String {
-    url::Url::parse(start_url)
-        .ok()
-        .and_then(|url| url.host_str().map(str::to_owned))
-        .unwrap_or_else(|| start_url.to_owned())
-}
-
-/// Lays the rows out in columns, marking the current default.
-fn align(rows: &[[String; 4]], selected: Option<&str>) -> Vec<String> {
-    let width = |column: usize| {
-        rows.iter()
-            .map(|row| row[column].chars().count())
-            .max()
-            .unwrap_or(0)
-    };
-    let widths = [width(0), width(1), width(2)];
+/// Lays the cells out in left-aligned columns, two spaces apart, without trailing spaces.
+fn align(rows: &[Vec<String>]) -> Vec<String> {
+    let columns = rows.first().map_or(0, Vec::len);
+    let widths: Vec<usize> = (0..columns)
+        .map(|c| {
+            rows.iter()
+                .map(|row| row[c].chars().count())
+                .max()
+                .unwrap_or(0)
+        })
+        .collect();
     rows.iter()
         .map(|row| {
-            let marker = if selected == Some(row[0].as_str()) {
-                "  (default)"
-            } else {
-                ""
-            };
-            format!(
-                "{:w0$}  {:w1$}  {:w2$}  {}{marker}",
-                row[0],
-                row[1],
-                row[2],
-                row[3],
-                w0 = widths[0],
-                w1 = widths[1],
-                w2 = widths[2],
-            )
-            .trim_end()
-            .to_owned()
+            row.iter()
+                .zip(&widths)
+                .map(|(cell, width)| format!("{cell:<width$}"))
+                .collect::<Vec<_>>()
+                .join("  ")
+                .trim_end()
+                .to_owned()
         })
         .collect()
+}
+
+/// The `region` the session's sync block sets, if any.
+fn sync_region(
+    ctx: &Context,
+    files: &AwsFiles,
+    session: &SessionName,
+) -> Result<Option<crate::domain::Region>> {
+    let blocks = ctx.blocks(files)?;
+    let Some(block) = blocks.iter().find(|b| b.header.session == session.as_str()) else {
+        return Ok(None);
+    };
+    Ok(SyncSettings::from_header(&block.header)?.region)
+}
+
+fn broken(ctx: &Context, err: &DefaultError) -> Error {
+    Error::config(format!(
+        "gac cannot tell which [default] to use in {}: {err}",
+        ctx.paths.config_file().display()
+    ))
+    .with_hint("leave one [default] section, and repair or delete broken `# BEGIN gac-redux default` / `# END gac-redux default` lines by hand")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn row(cells: [&str; 4]) -> [String; 4] {
-        cells.map(str::to_owned)
+    fn row(session: &str, id: &str, name: &str, role: &str) -> Row {
+        Row {
+            session: session.parse().unwrap(),
+            account: Account {
+                id: id.parse().unwrap(),
+                name: name.into(),
+                email: None,
+                roles: Vec::new(),
+            },
+            role: role.parse().unwrap(),
+        }
     }
 
     #[test]
-    fn names_the_portal_by_its_host() {
-        assert_eq!(
-            portal_host("https://my-portal.awsapps.com/start"),
-            "my-portal.awsapps.com"
-        );
-        assert_eq!(portal_host("not a url"), "not a url");
-    }
-
-    #[test]
-    fn aligns_rows_and_marks_the_default() {
-        let rows = [
-            row([
-                "corp",
-                "corp.awsapps.com",
-                "us-east-1",
-                "logged in, 7h 12m left",
-            ]),
-            row(["sandbox", "sb.awsapps.com", "eu-west-1", "not logged in"]),
-        ];
-        insta::assert_snapshot!(align(&rows, Some("sandbox")).join("\n"), @r"
-        corp     corp.awsapps.com  us-east-1  logged in, 7h 12m left
-        sandbox  sb.awsapps.com    eu-west-1  not logged in  (default)
+    fn aligns_rows_like_gac_list() {
+        let cells = [
+            vec!["111122223333", "payments-prod", "AdministratorAccess", ""],
+            vec!["444455556666", "Shared Services", "ReadOnly", "(default)"],
+        ]
+        .map(|row| row.into_iter().map(str::to_owned).collect());
+        insta::assert_snapshot!(align(&cells).join("\n"), @r"
+        111122223333  payments-prod    AdministratorAccess
+        444455556666  Shared Services  ReadOnly             (default)
         ");
+    }
+
+    #[test]
+    fn finds_a_target_by_name_slug_or_id() {
+        let rows = [
+            row("corp", "111122223333", "Payments Prod", "ReadOnly"),
+            row("corp", "111122223333", "Payments Prod", "Admin"),
+            row("other", "444455556666", "Payments Prod", "ReadOnly"),
+        ];
+        assert_eq!(
+            find_target(&rows, "payments-prod/admin")
+                .unwrap()
+                .role
+                .as_str(),
+            "Admin"
+        );
+        assert_eq!(
+            find_target(&rows, "444455556666/ReadOnly")
+                .unwrap()
+                .session
+                .as_str(),
+            "other"
+        );
+        let ambiguous = find_target(&rows, "Payments Prod/ReadOnly").unwrap_err();
+        assert!(ambiguous.to_string().contains("corp, other"));
+        assert!(find_target(&rows, "nope/ReadOnly").is_err());
     }
 }

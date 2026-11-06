@@ -12,7 +12,7 @@ Options:
   -h, --help            Print help
 
 Global options:
-      --session <NAME>  The [sso-session] to use, overriding the default from `gac select` [env:
-                        GAC_REDUX_SESSION]
+      --session <NAME>  The [sso-session] to use, overriding the session of the [default] profile
+                        [env: GAC_REDUX_SESSION]
       --no-input        Never prompt; fail with a hint instead
   -v, --verbose...      Log to stderr: -v for debug, -vv for trace. Secrets are never logged
