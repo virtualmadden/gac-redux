@@ -498,6 +498,47 @@ fn an_expired_token_without_refresh_requires_login() {
 }
 
 #[test]
+fn an_expired_token_whose_refresh_is_rejected_is_not_promised_a_refresh() {
+    let sandbox = Sandbox::with_session();
+    login_device(&sandbox);
+    // The portal session ended: the cache still has a refresh token, but the service rejects it.
+    let mut token = sandbox.token("corp");
+    token["expiresAt"] = json!("2020-01-01T00:00:00Z");
+    token["refreshToken"] = json!("FAKE-ENDED");
+    sandbox.write_token("corp", &token);
+
+    sandbox
+        .gac()
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "expired at 2020-01-01T00:00:00Z; the next use tries a refresh",
+        ))
+        .stdout(predicate::str::contains("refreshable").not());
+    sandbox
+        .gac()
+        .arg("doctor")
+        .assert()
+        .stdout(predicate::str::contains(
+            "the token expired at 2020-01-01T00:00:00Z; the next use tries to refresh it",
+        ));
+
+    let output = sandbox.gac().arg("list").assert().code(3);
+    let err = stderr(output.get_output());
+    assert_eq!(sandbox.mock.counter("refresh_rejected"), 1);
+    // At the default width of 80 the timestamp lands on the wrap point; it must stay whole.
+    assert!(err.contains("2020-01-01T00:00:00Z"), "{err}");
+    assert!(err.contains("could not be refreshed"), "{err}");
+    assert!(err.contains("InvalidGrantException"), "{err}");
+    assert!(err.contains("gac login --session corp"), "{err}");
+    assert!(
+        !err.contains("WARN"),
+        "the reason is in the error, not a separate log line: {err}"
+    );
+}
+
+#[test]
 fn a_revoked_token_requires_login() {
     let sandbox = Sandbox::with_session();
     login_device(&sandbox);

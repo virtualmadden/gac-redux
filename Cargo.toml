@@ -39,6 +39,7 @@ sha1 = "0.11"
 sha2 = "0.11"
 similar = "3"
 tempfile = "3.27"
+textwrap = { version = "0.16", default-features = false }
 thiserror = "2"
 tokio = { version = "1", features = ["rt", "macros", "net", "time", "signal", "sync"] }
 tracing = "0.1"

@@ -202,7 +202,14 @@ fn check_sessions(report: &mut Report, inputs: &Inputs<'_>, files: &AwsFiles) {
                     ),
                     login,
                 ),
-                TokenState::Expired | TokenState::RefreshDue => report.ok(
+                TokenState::Expired => report.ok(
+                    "sessions",
+                    format!(
+                        "session `{name}`: the token expired at {}; the next use tries to refresh it",
+                        token.expires_at
+                    ),
+                ),
+                TokenState::RefreshDue => report.ok(
                     "sessions",
                     format!("session `{name}`: the token refreshes on next use"),
                 ),
