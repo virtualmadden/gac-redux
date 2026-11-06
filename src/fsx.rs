@@ -87,6 +87,8 @@ pub fn mode(_path: &Path) -> Option<u32> {
 }
 
 /// Sets the permission bits of a file or directory. A no-op where the platform has none.
+// Only Unix can fail, but callers handle both alike.
+#[cfg_attr(not(unix), allow(clippy::unnecessary_wraps))]
 pub fn set_mode(path: &Path, mode: u32) -> Result<()> {
     #[cfg(unix)]
     {
