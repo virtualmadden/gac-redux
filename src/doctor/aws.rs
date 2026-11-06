@@ -1,4 +1,5 @@
-//! The AWS checks behind `gac doctor`. They only read.
+//! The AWS checks behind `gac doctor`. They only read; what `--fix` can repair they hand back as
+//! [`Action`]s.
 
 use std::ffi::OsString;
 use std::path::Path;
@@ -7,9 +8,9 @@ use jiff::Timestamp;
 
 use crate::auth::token::{SsoCache, TokenState, TokenStore};
 use crate::aws_files::default_block::{self, Found};
-use crate::aws_files::read::missing_session_hint;
 use crate::aws_files::{AwsFiles, AwsPaths, guards, managed_block};
 use crate::doctor::Report;
+use crate::doctor::fix::Action;
 use crate::fsx;
 
 /// Everything the checks look at, gathered up front so they stay pure.
@@ -22,10 +23,18 @@ pub struct Inputs<'a> {
     pub now: Timestamp,
 }
 
-pub fn run(inputs: &Inputs<'_>) -> Report {
+/// The report, and the actions that repair the findings marked fixable.
+#[derive(Debug, Default)]
+pub struct Diagnosis {
+    pub report: Report,
+    pub actions: Vec<Action>,
+}
+
+pub fn run(inputs: &Inputs<'_>) -> Diagnosis {
     let mut report = Report::default();
+    let mut actions = Vec::new();
     check_home(&mut report, inputs);
-    check_modes(&mut report, inputs.paths);
+    check_modes(&mut report, &mut actions, inputs.paths);
     match &inputs.files {
         Ok(files) => {
             let files = *files;
@@ -36,9 +45,9 @@ pub fn run(inputs: &Inputs<'_>) -> Report {
                 report.ok("config", format!("{} does not exist yet", config.display()));
             }
             check_mixed_credentials(&mut report, inputs.paths, files);
-            check_sessions(&mut report, inputs, files);
-            check_legacy(&mut report, files);
-            check_blocks(&mut report, files);
+            check_sessions(&mut report, &mut actions, inputs, files);
+            check_legacy(&mut report, &mut actions, files);
+            check_blocks(&mut report, &mut actions, files);
             check_default(&mut report, files);
         }
         Err(err) => report.fail(
@@ -47,7 +56,7 @@ pub fn run(inputs: &Inputs<'_>) -> Report {
             "correct the file; gac and the AWS SDKs read it with the same parser",
         ),
     }
-    report
+    Diagnosis { report, actions }
 }
 
 fn check_home(report: &mut Report, inputs: &Inputs<'_>) {
@@ -77,38 +86,31 @@ fn too_open(mode: u32) -> bool {
     mode & 0o077 != 0
 }
 
-fn check_modes(report: &mut Report, paths: &AwsPaths) {
-    let credentials = paths.credentials_file();
-    if let Some(mode) = fsx::mode(credentials).filter(|m| too_open(*m)) {
-        report.warn(
+fn check_modes(report: &mut Report, actions: &mut Vec<Action>, paths: &AwsPaths) {
+    let mut private = |path: &Path, mode: u32, problem: &str| {
+        let Some(current) = fsx::mode(path).filter(|m| too_open(*m)) else {
+            return;
+        };
+        report.warn_fixable(
             "file-modes",
-            format!(
-                "{} is {mode:o}: other users can read it",
-                credentials.display()
-            ),
-            format!("chmod 600 {}", credentials.display()),
+            format!("{} is {current:o}: {problem}", path.display()),
+            format!("chmod {mode:o} {}", path.display()),
         );
-    }
+        actions.push(Action::Chmod {
+            path: path.to_owned(),
+            mode,
+        });
+    };
+    private(paths.credentials_file(), 0o600, "other users can read it");
     for dir in [paths.sso_cache_dir(), paths.state_dir()] {
-        if let Some(mode) = fsx::mode(&dir).filter(|m| too_open(*m)) {
-            report.warn(
-                "file-modes",
-                format!("{} is {mode:o}: other users can list it", dir.display()),
-                format!("chmod 700 {}", dir.display()),
-            );
-        }
+        private(&dir, 0o700, "other users can list it");
     }
     for file in json_files(&paths.sso_cache_dir()) {
-        if let Some(mode) = fsx::mode(&file).filter(|m| too_open(*m)) {
-            report.warn(
-                "file-modes",
-                format!(
-                    "{} is {mode:o}: it holds a portal session other users can read",
-                    file.display()
-                ),
-                format!("chmod 600 {}", file.display()),
-            );
-        }
+        private(
+            &file,
+            0o600,
+            "it holds a portal session other users can read",
+        );
     }
     if !report.findings.iter().any(|f| f.check == "file-modes") {
         report.ok("file-modes", "credentials and caches are private");
@@ -153,7 +155,12 @@ fn check_mixed_credentials(report: &mut Report, paths: &AwsPaths, files: &AwsFil
     }
 }
 
-fn check_sessions(report: &mut Report, inputs: &Inputs<'_>, files: &AwsFiles) {
+fn check_sessions(
+    report: &mut Report,
+    actions: &mut Vec<Action>,
+    inputs: &Inputs<'_>,
+    files: &AwsFiles,
+) {
     let store = SsoCache::new(inputs.paths.sso_cache_dir());
     let legacy_urls: Vec<String> = files
         .legacy_sso_profiles()
@@ -181,7 +188,10 @@ fn check_sessions(report: &mut Report, inputs: &Inputs<'_>, files: &AwsFiles) {
             }
         };
         if session.scopes.is_empty() {
-            report.warn(
+            actions.push(Action::AddScopes {
+                session: name.to_owned(),
+            });
+            report.warn_fixable(
                 "sessions",
                 format!("[sso-session {name}] has no sso_registration_scopes, so logins get no refresh token"),
                 format!("add `sso_registration_scopes = sso:account:access` to [sso-session {name}]"),
@@ -236,9 +246,12 @@ fn check_sessions(report: &mut Report, inputs: &Inputs<'_>, files: &AwsFiles) {
     }
 }
 
-fn check_legacy(report: &mut Report, files: &AwsFiles) {
+fn check_legacy(report: &mut Report, actions: &mut Vec<Action>, files: &AwsFiles) {
     for profile in files.legacy_sso_profiles() {
-        report.warn(
+        actions.push(Action::MoveLegacy {
+            profile: profile.profile.clone(),
+        });
+        report.warn_fixable(
             "legacy-profiles",
             format!(
                 "profile `{}` sets sso_start_url inline: a legacy profile with a fixed session and no token refresh",
@@ -294,7 +307,7 @@ fn check_default(report: &mut Report, files: &AwsFiles) {
     }
 }
 
-fn check_blocks(report: &mut Report, files: &AwsFiles) {
+fn check_blocks(report: &mut Report, actions: &mut Vec<Action>, files: &AwsFiles) {
     match managed_block::scan(files.config_text()) {
         Err(err) => report.fail(
             "managed-blocks",
@@ -304,13 +317,17 @@ fn check_blocks(report: &mut Report, files: &AwsFiles) {
         Ok(blocks) => {
             let mut orphaned = false;
             for block in &blocks {
-                if !files.has_session(&block.header.session) {
+                let session = &block.header.session;
+                if !files.has_session(session) {
                     orphaned = true;
-                    report.warn(
+                    report.warn_fixable(
                         "managed-blocks",
-                        format!("the gac block for session `{}` has no [sso-session] section, so its profiles cannot resolve", block.header.session),
-                        missing_session_hint(files.config_text(), &block.header.session),
+                        format!("the gac block for session `{session}` has no [sso-session] section, so its profiles cannot resolve"),
+                        format!("delete the gac block for session `{session}`, then run `gac setup --session {session}` if you still use it"),
                     );
+                    actions.push(Action::RemoveBlock {
+                        session: session.clone(),
+                    });
                 }
             }
             if !orphaned {
@@ -355,7 +372,7 @@ sso_region = us-east-1
         let files = AwsFiles::parse(config.into(), "[dev]\naws_access_key_id = AKIA\n")
             .await
             .unwrap();
-        let report = run(&Inputs {
+        let Diagnosis { report, actions } = run(&Inputs {
             paths: &paths,
             files: Ok(&files),
             home_var: None,
@@ -387,6 +404,25 @@ sso_region = us-east-1
             Some(Level::Warn)
         );
         assert!(report.has_failures());
+        assert_eq!(
+            actions,
+            [
+                Action::AddScopes {
+                    session: "corp".into()
+                },
+                Action::MoveLegacy {
+                    profile: "old".into()
+                },
+                Action::RemoveBlock {
+                    session: "gone".into()
+                },
+            ]
+        );
+        assert_eq!(
+            report.findings.iter().filter(|f| f.fixable).count(),
+            actions.len(),
+            "every action has a fixable finding"
+        );
     }
 
     #[test]
@@ -402,7 +438,8 @@ sso_region = us-east-1
             home_var: Some("/a".into()),
             userprofile_var: Some("/b".into()),
             now: Timestamp::now(),
-        });
+        })
+        .report;
         assert_eq!(report.findings[0].check, "home");
         assert_eq!(report.findings[0].level, Level::Warn);
         assert!(report.has_failures(), "an unparsable config fails");

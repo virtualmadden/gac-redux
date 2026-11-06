@@ -1,7 +1,9 @@
-//! A read-only health report: each finding has a level and, when something is wrong, a
-//! suggested fix. The framework knows nothing about AWS; the checks live in [`aws`].
+//! A health report: each finding has a level and, when something is wrong, a suggested fix,
+//! which some findings can apply themselves. The framework knows nothing about AWS; the checks
+//! live in [`aws`] and the fixes they can apply in [`fix`].
 
 pub mod aws;
+pub mod fix;
 
 use std::fmt::Write as _;
 
@@ -32,6 +34,9 @@ pub struct Finding {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fix: Option<String>,
+    /// `--fix` can apply the fix.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub fixable: bool,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -53,6 +58,20 @@ impl Report {
         self.push(check, Level::Warn, message.into(), Some(fix.into()));
     }
 
+    /// A warning whose fix `--fix` can apply.
+    pub fn warn_fixable(
+        &mut self,
+        check: &'static str,
+        message: impl Into<String>,
+        fix: impl Into<String>,
+    ) {
+        self.warn(check, message, fix);
+        self.findings
+            .last_mut()
+            .expect("a finding was just pushed")
+            .fixable = true;
+    }
+
     pub fn fail(
         &mut self,
         check: &'static str,
@@ -68,6 +87,7 @@ impl Report {
             level,
             message,
             fix,
+            fixable: false,
         });
     }
 
@@ -101,6 +121,10 @@ impl Report {
             plural(count(Level::Warn), "warning"),
             plural(count(Level::Fail), "failure")
         );
+        let fixable = self.findings.iter().filter(|f| f.fixable).count();
+        if fixable > 0 {
+            let _ = writeln!(out, "--fix can apply {fixable} of the fixes.");
+        }
         out
     }
 }
@@ -114,6 +138,7 @@ mod tests {
         let mut report = Report::default();
         report.ok("a", "fine");
         report.warn("b", "meh", "do this\nthen that");
+        report.warn_fixable("d", "fixable", "gac can");
         report.fail("c", "broken", "fix it");
         assert!(report.has_failures());
         insta::assert_snapshot!(report.render(), @r"
@@ -121,10 +146,13 @@ mod tests {
         [warn] b: meh
                fix: do this
                     then that
+        [warn] d: fixable
+               fix: gac can
         [FAIL] c: broken
                fix: fix it
 
-        1 ok, 1 warning, 1 failure
+        1 ok, 2 warnings, 1 failure
+        --fix can apply 1 of the fixes.
         ");
     }
 }

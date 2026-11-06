@@ -79,7 +79,7 @@ $ aws s3 ls --profile payments-prod/ReadOnly
 | `gac status` | Sessions, token and registration expiry, sync blocks. No secrets. `--json` |
 | `gac sync` | Writes and prunes the managed block. `--name TEMPLATE`, `--include`/`--exclude GLOB`, `--region`, `--reset`, `--refresh`, `--dry-run` |
 | `gac list` | Accounts and roles, from a one-hour inventory cache. `--json`, `--refresh` |
-| `gac doctor` | Read-only checks of the AWS files and caches, each with a suggested fix. `--json` |
+| `gac doctor` | Checks the AWS files and caches, each problem with a suggested fix. `--fix` applies the mechanical ones; a fix to lines you wrote shows its diff and asks first (`--yes` skips asking). `--json` |
 | `gac completions SHELL` | Prints a completion script for `bash`, `zsh`, `fish`, `powershell` or `elvish` |
 
 With more than one session configured, a command uses `--session NAME`, else the session of
@@ -129,7 +129,10 @@ it.
 ### Something is wrong with my AWS files. Where do I start?
 
 `gac doctor` checks the AWS config, the credentials file and the caches without changing anything,
-and suggests a fix for each problem it finds.
+and suggests a fix for each problem it finds. `gac doctor --fix` applies the mechanical ones:
+private file modes, removing a gac block whose `[sso-session]` is gone, adding the scope that
+gets a session refresh tokens, and moving legacy profiles with an inline `sso_start_url` onto an
+`[sso-session]`. A fix to lines you wrote shows its diff and asks first.
 
 ## Development
 
