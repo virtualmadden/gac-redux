@@ -5,6 +5,7 @@ pub mod guards;
 pub mod managed_block;
 pub mod paths;
 pub mod read;
+pub mod section;
 
 pub use paths::AwsPaths;
 pub use read::{AwsFiles, LegacySsoProfile, SsoSessionConfig};
