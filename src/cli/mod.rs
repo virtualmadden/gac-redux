@@ -36,7 +36,7 @@ const GLOBAL: &str = "Global options";
     max_term_width = 100
 )]
 pub struct Cli {
-    /// The [sso-session] to use, overriding the default from `gac select`.
+    /// The [sso-session] to use, overriding the session of the [default] profile.
     // `run` keeps the value only when typed on the command line: clap counts an env value as the
     // flag being given, so --profile and --all would conflict with an exported GAC_REDUX_SESSION.
     // Context reads GAC_REDUX_SESSION itself; `env` is here for the help text.
@@ -70,7 +70,7 @@ enum Command {
     Login(LoginArgs),
     /// Revoke the session, delete its cached token and the AWS CLI's SSO role credentials.
     Logout(LogoutArgs),
-    /// Pick the default session from a list, or set it with --session.
+    /// Pick the account and role of the [default] profile from a list.
     Select(SelectArgs),
     /// Show sessions, token and registration expiry, and managed blocks. No secrets.
     Status(StatusArgs),
@@ -129,9 +129,17 @@ struct LogoutArgs {
 
 #[derive(Debug, Args)]
 struct SelectArgs {
-    /// Forget the default session.
+    /// Choose without the list, by account name or id, e.g. `payments-prod/ReadOnly`.
+    #[arg(value_name = "ACCOUNT/ROLE", conflicts_with = "clear")]
+    target: Option<String>,
+
+    /// Take the account and role out of [default] again.
     #[arg(long)]
     clear: bool,
+
+    /// Let gac manage a [default] section you wrote, without asking.
+    #[arg(long)]
+    adopt: bool,
 }
 
 #[derive(Debug, Args)]
@@ -238,7 +246,7 @@ impl Command {
                 profile: Some(_), ..
             }) => Some(("logout", "--profile <NAME>")),
             Command::Logout(LogoutArgs { all: true, .. }) => Some(("logout", "--all")),
-            Command::Select(SelectArgs { clear: true }) => Some(("select", "--clear")),
+            Command::Select(SelectArgs { clear: true, .. }) => Some(("select", "--clear")),
             _ => None,
         }
     }

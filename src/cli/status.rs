@@ -27,8 +27,9 @@ struct Status {
 struct SessionStatus {
     name: String,
     kind: &'static str,
-    /// Whether this is the default session `gac select` saved.
-    selected: bool,
+    /// Set when the `[default]` profile uses this session.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default_profile: Option<DefaultProfile>,
     #[serde(skip_serializing_if = "Option::is_none")]
     start_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -38,6 +39,16 @@ struct SessionStatus {
     token: TokenStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     sync_block: Option<BlockStatus>,
+}
+
+/// The account and role of the `[default]` profile; both absent when it names none.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DefaultProfile {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    role_name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -78,17 +89,14 @@ pub async fn run(ctx: &Context, args: StatusArgs) -> Result<()> {
     let mut sessions: Vec<SessionStatus> = files
         .session_names()
         .into_iter()
-        .map(|name| {
-            let selected = ctx.selected().is_some_and(|s| s.as_str() == name);
-            named_status(&files, &store, &blocks, name, selected, now)
-        })
+        .map(|name| named_status(&files, &store, &blocks, name, now))
         .collect();
     sessions.extend(files.legacy_sso_profiles().into_iter().map(|legacy| {
         let session = Session::from(legacy.clone());
         SessionStatus {
             name: legacy.profile,
             kind: "legacy-profile",
-            selected: false,
+            default_profile: None,
             start_url: Some(legacy.start_url.to_string()),
             region: Some(legacy.region.to_string()),
             error: None,
@@ -117,9 +125,15 @@ fn named_status(
     store: &impl TokenStore,
     blocks: &[Block],
     name: &str,
-    selected: bool,
     now: Timestamp,
 ) -> SessionStatus {
+    let default_profile = files
+        .config_profile("default")
+        .filter(|p| p.get("sso_session") == Some(name))
+        .map(|p| DefaultProfile {
+            account_id: p.get("sso_account_id").map(str::to_owned),
+            role_name: p.get("sso_role_name").map(str::to_owned),
+        });
     let sync_block = blocks
         .iter()
         .find(|b| b.header.session == name)
@@ -130,7 +144,7 @@ fn named_status(
             SessionStatus {
                 name: name.to_owned(),
                 kind: "sso-session",
-                selected,
+                default_profile,
                 start_url: Some(session.start_url.to_string()),
                 region: Some(session.region.to_string()),
                 error: None,
@@ -141,7 +155,7 @@ fn named_status(
         Err(err) => SessionStatus {
             name: name.to_owned(),
             kind: "sso-session",
-            selected,
+            default_profile,
             start_url: None,
             region: None,
             error: Some(err.to_string()),
@@ -215,7 +229,11 @@ fn render(status: &Status, now: Timestamp) -> String {
         } else {
             "legacy profile"
         };
-        let default = if s.selected { " (default)" } else { "" };
+        let default = if s.default_profile.is_some() {
+            " (default)"
+        } else {
+            ""
+        };
         let _ = writeln!(out, "{kind} {}{default}", s.name);
         if let Some(error) = &s.error {
             let _ = writeln!(out, "  error         {error}");
@@ -231,6 +249,13 @@ fn render(status: &Status, now: Timestamp) -> String {
         if let Some(at) = &s.token.registration_expires_at {
             let _ = writeln!(out, "  registration  expires {at}");
         }
+        if let Some(profile) = &s.default_profile {
+            let line = match (&profile.account_id, &profile.role_name) {
+                (Some(account), Some(role)) => format!("account {account}, role {role}"),
+                _ => "no account or role (run `gac select`)".to_owned(),
+            };
+            let _ = writeln!(out, "  [default]     {line}");
+        }
         if s.kind == "sso-session" {
             let block = s.sync_block.as_ref().map_or_else(
                 || "none (run `gac sync`)".to_owned(),
@@ -243,23 +268,6 @@ fn render(status: &Status, now: Timestamp) -> String {
         }
     }
     out
-}
-
-/// The token state in a few words, for one line of the `gac select` picker.
-pub(super) fn token_summary(store: &impl TokenStore, session: &Session, now: Timestamp) -> String {
-    let token = token_status(store, session, now);
-    let left = token
-        .expires_at
-        .as_deref()
-        .and_then(timestamp::parse)
-        .map(|at| human(at.duration_since(now)));
-    match (token.state, left) {
-        ("valid" | "refresh-due", Some(left)) => format!("logged in, {left} left"),
-        ("expired", _) if token.refreshable => "expired, refreshable".to_owned(),
-        ("expired", _) => "expired".to_owned(),
-        ("unreadable", _) => "unreadable token".to_owned(),
-        _ => "not logged in".to_owned(),
-    }
 }
 
 fn describe_token(token: &TokenStatus, now: Timestamp) -> String {

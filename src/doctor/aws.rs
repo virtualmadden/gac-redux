@@ -6,6 +6,7 @@ use std::path::Path;
 use jiff::Timestamp;
 
 use crate::auth::token::{SsoCache, TokenState, TokenStore};
+use crate::aws_files::default_block::{self, Found};
 use crate::aws_files::read::missing_session_hint;
 use crate::aws_files::{AwsFiles, AwsPaths, guards, managed_block};
 use crate::doctor::Report;
@@ -38,6 +39,7 @@ pub fn run(inputs: &Inputs<'_>) -> Report {
             check_sessions(&mut report, inputs, files);
             check_legacy(&mut report, files);
             check_blocks(&mut report, files);
+            check_default(&mut report, files);
         }
         Err(err) => report.fail(
             "config",
@@ -247,6 +249,48 @@ fn check_legacy(report: &mut Report, files: &AwsFiles) {
                 profile.profile
             ),
         );
+    }
+}
+
+fn check_default(report: &mut Report, files: &AwsFiles) {
+    let section = match default_block::find(files.config_text()) {
+        Err(err) => {
+            report.fail(
+                "default-profile",
+                format!("gac cannot tell which [default] to use: {err}"),
+                "leave one [default] section, and repair or delete broken `# BEGIN gac-redux default` / `# END gac-redux default` lines by hand",
+            );
+            return;
+        }
+        Ok(Found::Absent) => {
+            report.ok("default-profile", "no [default] profile");
+            return;
+        }
+        Ok(Found::HandWritten(_)) => {
+            report.ok(
+                "default-profile",
+                "[default] is yours; `gac select` can manage it",
+            );
+            return;
+        }
+        Ok(Found::Managed(section)) => section,
+    };
+    match section.get(default_block::SESSION_KEY) {
+        Some(session) if !files.has_session(session) => report.warn(
+            "default-profile",
+            format!("[default] uses session `{session}`, which has no [sso-session] section"),
+            "run `gac select` to pick an account and role of a configured session",
+        ),
+        _ => match (
+            section.get(default_block::ACCOUNT_KEY),
+            section.get(default_block::ROLE_KEY),
+        ) {
+            (Some(account), Some(role)) => report.ok(
+                "default-profile",
+                format!("[default] uses account {account}, role {role}"),
+            ),
+            _ => report.ok("default-profile", "[default] names no account or role"),
+        },
     }
 }
 

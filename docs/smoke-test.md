@@ -16,9 +16,10 @@ awsx() { HOME="$SMOKE" USERPROFILE="$SMOKE" aws "$@"; }
    prints `Added [sso-session smoke]`.
 2. **PKCE.** `gac login` opens the browser; approve. Expect ``Logged in to session `smoke` `` and
    `gac status` showing the token `valid until ...`, `refreshable`.
-3. **Select.** `gac select` lists `smoke` with its portal host, region and `logged in, ... left`;
-   press Enter. Expect ``The default session is now `smoke`.`` and `gac status` showing
-   `session smoke (default)`.
+3. **Select.** `gac select` lists your accounts and roles as `gac list` does, the first one
+   highlighted; move with the arrow keys and press Enter. Expect `The default profile is now ...`,
+   then `awsx sts get-caller-identity` (no `--profile`) returns that role's ARN. `gac select --clear`
+   makes the same call fail with `Unable to locate credentials`.
 4. **Device code.** `gac login --device-code`; open the printed link, check the code matches,
    approve. Expect the same success line.
 5. **List.** `gac list` prints your accounts and roles.

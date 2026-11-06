@@ -2,7 +2,7 @@
 
 use inquire::list_option::ListOption;
 use inquire::validator::Validation;
-use inquire::{InquireError, Select, Text};
+use inquire::{Confirm, InquireError, Select, Text};
 
 use crate::error::{Error, Result};
 
@@ -47,6 +47,15 @@ pub fn select(
         .with_formatter(&answer)
         .raw_prompt()
         .map(|choice| choice.index)
+        .map_err(prompt_error)
+}
+
+/// Asks a yes/no question; anything but yes is no.
+pub fn confirm(message: &str, help: &str) -> Result<bool> {
+    Confirm::new(message)
+        .with_default(false)
+        .with_help_message(help)
+        .prompt()
         .map_err(prompt_error)
 }
 

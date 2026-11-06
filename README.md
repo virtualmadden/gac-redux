@@ -30,6 +30,10 @@ sso_role_name = ReadOnly
 # END gac-redux sync session=corp
 ```
 
+`gac select` writes `[default]` into a block of its own, so the AWS CLI and SDKs use that account
+and role when no profile is named. It takes over a `[default]` you wrote only when you agree, keeps
+its lines, and `gac select --clear` removes the account and role again.
+
 `gac` never edits a line outside its own blocks, and it skips any profile name that already has a
 section in `~/.aws/credentials`: an SSO profile there would make the SDKs silently ignore its keys.
 
@@ -49,7 +53,7 @@ $ aws s3 ls --profile payments-prod/ReadOnly
 |---|---|
 | `gac setup` | Creates an `[sso-session]` in the session's managed block, or reuses one `aws configure sso` already wrote |
 | `gac login` | Signs in and writes the shared token cache. `--device-code`, `--pkce`, `--no-browser`, `--port N`, `-p PROFILE` |
-| `gac select` | Picks the default session from a list showing each portal, region and token state. `--session NAME` sets it without the list, `--clear` forgets it |
+| `gac select` | Picks the account and role of the `[default]` profile from a list of every session's accounts and roles. `ACCOUNT/ROLE` picks without the list, `--clear` takes them out again, `--adopt` takes over a `[default]` you wrote |
 | `gac logout` | Revokes the session (`sso:Logout`), deletes its token and, as `aws sso logout` does, every role credential the AWS CLI cached from SSO tokens. `--all` |
 | `gac status` | Sessions, token and registration expiry, sync blocks. No secrets. `--json` |
 | `gac sync` | Writes and prunes the managed block. `--name TEMPLATE`, `--include`/`--exclude GLOB`, `--region`, `--reset`, `--refresh`, `--dry-run` |
@@ -57,7 +61,7 @@ $ aws s3 ls --profile payments-prod/ReadOnly
 | `gac doctor` | Read-only checks of the AWS files and caches, each with a suggested fix. `--json` |
 
 With more than one session configured, a command uses `--session NAME`, else the session of
-`--profile`, else `GAC_REDUX_SESSION`, else the default saved by `gac select`. Data goes to stdout; prompts, links and progress go to stderr. Exit codes: `0` ok, `1` error, `2` usage,
+`--profile`, else `GAC_REDUX_SESSION`, else the session of the `[default]` profile. Data goes to stdout; prompts, links and progress go to stderr. Exit codes: `0` ok, `1` error, `2` usage,
 `3` login required, `130` interrupted. `-v`/`-vv` log to stderr and never print a secret.
 
 `gac` honors `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_ENDPOINT_URL_SSO`,
