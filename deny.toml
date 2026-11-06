@@ -25,10 +25,6 @@ allow = [
     "Zlib",
 ]
 
-[licenses.private]
-# gac is unpublished until it is renamed; its own license is chosen before the first publish.
-ignore = true
-
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"

@@ -1,0 +1,158 @@
+name: Release
+
+# Pushing a tag vX.Y.Z (or vX.Y.Z-beta.N) that matches the version in Cargo.toml builds the
+# binaries, publishes a GitHub release (a pre-release when the version has a suffix), and updates
+# the formula in virtualmadden/homebrew-tap. A pull request that changes the release files runs
+# everything up to publishing, so a broken release is caught before the tag.
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .github/scripts/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: version
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "gac-redux") | .version')
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: version
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin, os: macos-latest }
+          - { target: x86_64-apple-darwin, os: macos-latest }
+          # The oldest supported Ubuntu, so the binaries need only an old glibc.
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+    runs-on: ${{ matrix.os }}
+    env:
+      NAME: gac-redux-${{ needs.version.outputs.version }}-${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          mkdir "$NAME"
+          cp README.md LICENSE-MIT LICENSE-APACHE "$NAME/"
+          if [ "${{ runner.os }}" = Windows ]; then
+            cp "target/${{ matrix.target }}/release/gac.exe" "$NAME/"
+            7z a -tzip "$NAME.zip" "$NAME" > /dev/null
+          else
+            cp "target/${{ matrix.target }}/release/gac" "$NAME/"
+            tar -czf "$NAME.tar.gz" "$NAME"
+          fi
+      - name: Smoke test
+        if: matrix.target != 'x86_64-apple-darwin'
+        shell: bash
+        run: |
+          bin="$NAME/gac"
+          [ "${{ runner.os }}" = Windows ] && bin="$NAME/gac.exe"
+          "$bin" --version | grep -Fx "gac-redux ${{ needs.version.outputs.version }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.NAME }}
+          path: ${{ env.NAME }}.*
+          if-no-files-found: error
+
+  checksums:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: gac-redux-*
+          merge-multiple: true
+      - name: Checksums and formula
+        run: |
+          (cd dist && sha256sum gac-redux-* > SHA256SUMS && cat SHA256SUMS)
+          .github/scripts/homebrew-formula.sh "$VERSION" dist/SHA256SUMS > dist/gac-redux.rb
+          ruby -c dist/gac-redux.rb
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'push'
+    needs: [version, checksums]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: release
+          path: dist
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          prerelease=()
+          case "$VERSION" in *-*) prerelease=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
+            --title "gac-redux $VERSION" "${prerelease[@]}" dist/gac-redux-* dist/SHA256SUMS
+
+  homebrew:
+    if: github.event_name == 'push'
+    needs: [version, release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: release
+          path: dist
+      - uses: actions/checkout@v7
+        with:
+          repository: virtualmadden/homebrew-tap
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          path: tap
+      - name: Update the formula
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir -p tap/Formula
+          cp dist/gac-redux.rb tap/Formula/gac-redux.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/gac-redux.rb
+          git commit -m "gac-redux $VERSION"
+          git push

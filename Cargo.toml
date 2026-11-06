@@ -1,10 +1,12 @@
 [package]
 name = "gac-redux"
-version = "0.1.0"
+version = "0.2.0-beta.1"
 edition = "2024"
 rust-version = "1.94.1" # MSRV of the AWS SDK crates; std File::lock needs 1.89
 description = "Short-lived AWS credentials through IAM Identity Center, interoperable with the AWS CLI and SDKs"
 repository = "https://github.com/virtualmadden/gac-redux"
+license = "MIT OR Apache-2.0"
+# Released as GitHub release binaries and a Homebrew formula, not on crates.io.
 publish = false
 
 [lib]

@@ -50,7 +50,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       # The interop tests run against the runner's AWS CLI v2 and must not skip.
-      GAC_REQUIRE_AWS_CLI: "1"
+      GAC_REDUX_REQUIRE_AWS_CLI: "1"
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
