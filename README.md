@@ -20,6 +20,14 @@ Or download the archive for your platform from
 x86_64, Windows on x86_64), check it against `SHA256SUMS`, and put `gac` on your `PATH`. To build
 from source instead: `cargo install --locked --git https://github.com/virtualmadden/gac-redux`.
 
+Each archive also has `man/` with a page per command (`man gac`, `man gac-sync`) and
+`completions/` with scripts for bash, zsh, fish, PowerShell and Elvish. Without them, load
+completions straight from the binary, e.g. in `~/.zshrc` after `compinit`:
+
+```sh
+source <(gac completions zsh)
+```
+
 ## How it works
 
 `gac` sets up the SDKs' own Identity Center support and then gets out of the way:
@@ -72,6 +80,7 @@ $ aws s3 ls --profile payments-prod/ReadOnly
 | `gac sync` | Writes and prunes the managed block. `--name TEMPLATE`, `--include`/`--exclude GLOB`, `--region`, `--reset`, `--refresh`, `--dry-run` |
 | `gac list` | Accounts and roles, from a one-hour inventory cache. `--json`, `--refresh` |
 | `gac doctor` | Read-only checks of the AWS files and caches, each with a suggested fix. `--json` |
+| `gac completions SHELL` | Prints a completion script for `bash`, `zsh`, `fish`, `powershell` or `elvish` |
 
 With more than one session configured, a command uses `--session NAME`, else the session of
 `--profile`, else `GAC_REDUX_SESSION`, else the session of the `[default]` profile. Data goes to stdout; prompts, links and progress go to stderr. Exit codes: `0` ok, `1` error, `2` usage,

@@ -2,6 +2,7 @@
 
 mod context;
 mod doctor;
+mod generate;
 mod list;
 mod login;
 mod logout;
@@ -12,6 +13,7 @@ mod sync;
 
 use std::ffi::OsString;
 use std::io::IsTerminal;
+use std::path::PathBuf;
 
 use clap::error::ErrorKind;
 use clap::parser::ValueSource;
@@ -80,6 +82,11 @@ enum Command {
     List(ListArgs),
     /// Check the AWS files and caches for problems, with a fix for each. Read-only.
     Doctor(DoctorArgs),
+    /// Print a shell completion script, e.g. `source <(gac completions zsh)`.
+    Completions(CompletionsArgs),
+    /// Write the man pages into a directory. Used to build the release archives.
+    #[command(hide = true)]
+    Man(ManArgs),
 }
 
 #[derive(Debug, Args)]
@@ -198,6 +205,20 @@ struct DoctorArgs {
     json: bool,
 }
 
+#[derive(Debug, Args)]
+struct CompletionsArgs {
+    /// The shell to complete for.
+    #[arg(value_enum)]
+    shell: clap_complete::Shell,
+}
+
+#[derive(Debug, Args)]
+struct ManArgs {
+    /// The directory to write `gac.1` and the `gac-COMMAND.1` pages into.
+    #[arg(value_name = "DIR")]
+    dir: PathBuf,
+}
+
 /// Parses `args`, runs the command, and returns its outcome. Usage errors exit inside clap
 /// with code 2.
 pub fn run<I, T>(args: I) -> Result<()>
@@ -223,6 +244,11 @@ where
         .exit();
     }
     init_tracing(cli.verbose);
+    match &cli.command {
+        Command::Completions(args) => return generate::completions(args),
+        Command::Man(args) => return generate::man(args),
+        _ => {}
+    }
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -263,6 +289,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
         Command::Sync(args) => sync::run(&ctx, args).await,
         Command::List(args) => list::run(&ctx, args).await,
         Command::Doctor(args) => doctor::run(&ctx, args).await,
+        Command::Completions(_) | Command::Man(_) => unreachable!("handled before the runtime"),
     }
 }
 

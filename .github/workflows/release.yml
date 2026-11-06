@@ -38,9 +38,35 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+  # Completions and man pages are the same on every platform, and not every build can run its
+  # binary (x86_64-apple-darwin builds on arm64), so one host build generates them all.
+  extras:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo build --locked
+      - name: Generate
+        run: |
+          gac=target/debug/gac
+          mkdir -p extras/completions
+          $gac completions bash > extras/completions/gac.bash
+          $gac completions zsh > extras/completions/_gac
+          $gac completions fish > extras/completions/gac.fish
+          $gac completions powershell > extras/completions/_gac.ps1
+          $gac completions elvish > extras/completions/gac.elv
+          $gac man extras/man
+          bash -n extras/completions/gac.bash
+          ls -R extras
+      - uses: actions/upload-artifact@v7
+        with:
+          name: extras
+          path: extras/
+          if-no-files-found: error
+
   build:
     name: build (${{ matrix.target }})
-    needs: version
+    needs: [version, extras]
     strategy:
       fail-fast: true
       matrix:
@@ -60,11 +86,15 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - run: cargo build --release --locked --target ${{ matrix.target }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: extras
+          path: ${{ env.NAME }}
       - name: Package
         shell: bash
         run: |
-          mkdir "$NAME"
           cp README.md LICENSE-MIT LICENSE-APACHE "$NAME/"
+          test -s "$NAME/man/gac.1" && test -s "$NAME/completions/_gac"
           if [ "${{ runner.os }}" = Windows ]; then
             cp "target/${{ matrix.target }}/release/gac.exe" "$NAME/"
             7z a -tzip "$NAME.zip" "$NAME" > /dev/null
