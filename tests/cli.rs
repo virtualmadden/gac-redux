@@ -67,7 +67,10 @@ fn completions_print_a_script_for_every_shell_without_reading_the_aws_files() {
             assert!(script.contains(word), "{shell}: no `{word}` in the script");
         }
         // Check the syntax with the shell itself where it is installed; bash always is on Unix.
+        // The scripts are the same on every platform, and the bash on a Windows runner cannot
+        // read a Windows path, so the check runs on Unix only.
         let check = match shell {
+            _ if !cfg!(unix) => None,
             "bash" | "zsh" => Some(vec![shell, "-n"]),
             "fish" => Some(vec!["fish", "--no-execute"]),
             _ => None,
@@ -85,7 +88,7 @@ fn completions_print_a_script_for_every_shell_without_reading_the_aws_files() {
                 "{shell} rejects the script: {}",
                 String::from_utf8_lossy(&result.stderr)
             ),
-            Err(err) if cfg!(unix) && shell == "bash" => panic!("cannot run bash: {err}"),
+            Err(err) if shell == "bash" => panic!("cannot run bash: {err}"),
             Err(_) => {}
         }
     }
