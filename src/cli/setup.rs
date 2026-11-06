@@ -2,7 +2,6 @@
 //! already exists.
 
 use crate::auth::registration::DEFAULT_SCOPE;
-use crate::aws_files::managed_block::{self, Header};
 use crate::aws_files::{AwsFiles, SsoSessionConfig};
 use crate::cli::SetupArgs;
 use crate::cli::context::Context;
@@ -56,7 +55,7 @@ pub async fn run(ctx: &Context, args: SetupArgs) -> Result<()> {
     let name = if let Some(name) = ctx.session_flag() {
         name.clone()
     } else {
-        let suggested = suggest_name(&start_url);
+        let suggested = profiles::suggest_session_name(&start_url);
         if ctx.can_prompt() {
             ask(
                 ctx,
@@ -84,7 +83,7 @@ pub async fn run(ctx: &Context, args: SetupArgs) -> Result<()> {
         return Err(Error::config(format!(
             "a gac block for session `{name}` exists, but its [sso-session {name}] is gone"
         ))
-        .with_hint("delete that block by hand, then run gac setup again"));
+        .with_hint("run `gac doctor --fix` to delete that block, then run gac setup again"));
     }
 
     let text = files.config_text();
@@ -94,16 +93,7 @@ pub async fn run(ctx: &Context, args: SetupArgs) -> Result<()> {
         region,
         scopes: vec![DEFAULT_SCOPE.to_owned()],
     };
-    let header = Header {
-        session: name.to_string(),
-        settings: Vec::new(),
-    };
-    let block = managed_block::render(
-        &header,
-        &profiles::render_session(&session),
-        managed_block::line_ending(text),
-    );
-    ctx.write_config(text, &managed_block::append(text, &block))
+    ctx.write_config(text, &profiles::append_session_block(text, &session))
         .await?;
     ui::notice(format!(
         "Added [sso-session {name}] to {}.",
@@ -169,18 +159,6 @@ fn ask<T: std::str::FromStr<Err = Error>>(
     answer.parse()
 }
 
-/// The first label of the portal host, e.g. `my-portal` for `https://my-portal.awsapps.com/start`.
-fn suggest_name(start_url: &StartUrl) -> SessionName {
-    url::Url::parse(start_url.as_str())
-        .ok()
-        .and_then(|url| {
-            url.host_str()
-                .map(|h| h.split('.').next().unwrap_or(h).to_owned())
-        })
-        .and_then(|label| label.parse().ok())
-        .unwrap_or_else(|| "default".parse().expect("a valid session name"))
-}
-
 fn next_steps(files: &AwsFiles, name: &SessionName, created: bool) {
     let sessions = files.session_names().len() + usize::from(created);
     let flag = if sessions > 1 {
@@ -189,15 +167,4 @@ fn next_steps(files: &AwsFiles, name: &SessionName, created: bool) {
         String::new()
     };
     ui::notice(format!("Next: gac login{flag}, then gac sync{flag}"));
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn suggests_the_portal_label() {
-        let url: StartUrl = "https://my-portal.awsapps.com/start".parse().unwrap();
-        assert_eq!(suggest_name(&url).as_str(), "my-portal");
-    }
 }

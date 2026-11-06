@@ -170,7 +170,7 @@ pub fn missing_session_hint(config_text: &str, session: &str) -> String {
         .is_ok_and(|blocks| blocks.iter().any(|b| b.header.session == session));
     if orphaned {
         format!(
-            "delete the gac block for session `{session}` by hand, then run `gac setup --session {session}`"
+            "run `gac doctor --fix` to delete the gac block for session `{session}`, then `gac setup --session {session}`"
         )
     } else {
         format!("run `gac setup --session {session}`")
@@ -241,7 +241,7 @@ sso_region = us-east-1
         let err = files.sso_session(&"missing".parse().unwrap()).unwrap_err();
         assert_eq!(
             err.hint().unwrap(),
-            "delete the gac block for session `missing` by hand, then run `gac setup --session missing`"
+            "run `gac doctor --fix` to delete the gac block for session `missing`, then `gac setup --session missing`"
         );
     }
 

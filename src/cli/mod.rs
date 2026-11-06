@@ -80,7 +80,7 @@ enum Command {
     Sync(SyncArgs),
     /// List the accounts and roles you can use.
     List(ListArgs),
-    /// Check the AWS files and caches for problems, with a fix for each. Read-only.
+    /// Check the AWS files and caches for problems; --fix applies the mechanical fixes.
     Doctor(DoctorArgs),
     /// Print a shell completion script, e.g. `source <(gac completions zsh)`.
     Completions(CompletionsArgs),
@@ -203,6 +203,14 @@ struct DoctorArgs {
     /// Print JSON.
     #[arg(long)]
     json: bool,
+
+    /// Apply the fixes that are mechanical, then check again. A fix to lines you wrote shows its diff and asks first.
+    #[arg(long)]
+    fix: bool,
+
+    /// With --fix, apply the fixes to lines you wrote without asking.
+    #[arg(long, requires = "fix")]
+    yes: bool,
 }
 
 #[derive(Debug, Args)]

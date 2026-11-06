@@ -3,8 +3,9 @@
 
 use crate::auth::Session;
 use crate::aws_files::default_block::{
-    self, ACCOUNT_KEY, DefaultError, Found, ROLE_KEY, SESSION_KEY, Section,
+    self, ACCOUNT_KEY, DefaultError, Found, ROLE_KEY, SESSION_KEY,
 };
+use crate::aws_files::section::Section;
 use crate::aws_files::{AwsFiles, managed_block};
 use crate::cli::SelectArgs;
 use crate::cli::context::Context;
@@ -75,7 +76,7 @@ pub async fn run(ctx: &Context, args: SelectArgs) -> Result<()> {
             let range = section.range.clone();
             (section, Some(range))
         }
-        Found::Absent => (Section::empty(), None),
+        Found::Absent => (default_block::empty(), None),
     };
 
     section.set(SESSION_KEY, chosen.session.as_str(), &[]);
@@ -142,7 +143,7 @@ async fn write(
     section: &Section,
     range: Option<std::ops::Range<usize>>,
 ) -> Result<()> {
-    let block = section.render(managed_block::line_ending(text));
+    let block = default_block::render(section, managed_block::line_ending(text));
     let updated = match range {
         Some(range) => format!("{}{block}{}", &text[..range.start], &text[range.end..]),
         None => managed_block::append(text, &block),

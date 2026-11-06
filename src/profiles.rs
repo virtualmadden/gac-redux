@@ -8,8 +8,8 @@ use std::str::FromStr;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
 use crate::aws_files::SsoSessionConfig;
-use crate::aws_files::managed_block::Header;
-use crate::domain::{ProfileName, Region, RoleName, SessionName, is_sdk_identifier_char};
+use crate::aws_files::managed_block::{self, Header};
+use crate::domain::{ProfileName, Region, RoleName, SessionName, StartUrl, is_sdk_identifier_char};
 use crate::error::{Error, Result};
 use crate::portal::Account;
 
@@ -292,6 +292,33 @@ pub fn plan(
     Ok(planned)
 }
 
+/// `text` with a new block for the session that holds only its `[sso-session]`, as `gac setup`
+/// writes it; `gac sync` adds the profiles later.
+pub fn append_session_block(text: &str, session: &SsoSessionConfig) -> String {
+    let header = Header {
+        session: session.name.to_string(),
+        settings: Vec::new(),
+    };
+    let block = managed_block::render(
+        &header,
+        &render_session(session),
+        managed_block::line_ending(text),
+    );
+    managed_block::append(text, &block)
+}
+
+/// The first label of the portal host, e.g. `my-portal` for `https://my-portal.awsapps.com/start`.
+pub fn suggest_session_name(start_url: &StartUrl) -> SessionName {
+    url::Url::parse(start_url.as_str())
+        .ok()
+        .and_then(|url| {
+            url.host_str()
+                .map(|h| h.split('.').next().unwrap_or(h).to_owned())
+        })
+        .and_then(|label| label.parse().ok())
+        .unwrap_or_else(|| "default".parse().expect("a valid session name"))
+}
+
 /// An `[sso-session]` section that gac owns, as `gac setup` writes it into the session's block.
 pub fn render_session(session: &SsoSessionConfig) -> Vec<String> {
     let mut lines = vec![
@@ -333,6 +360,12 @@ pub fn render_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn suggests_the_portal_label() {
+        let url: StartUrl = "https://my-portal.awsapps.com/start".parse().unwrap();
+        assert_eq!(suggest_session_name(&url).as_str(), "my-portal");
+    }
 
     fn account(id: &str, name: &str, roles: &[&str]) -> Account {
         Account {

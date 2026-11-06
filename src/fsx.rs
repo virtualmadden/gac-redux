@@ -86,6 +86,19 @@ pub fn mode(_path: &Path) -> Option<u32> {
     None
 }
 
+/// Sets the permission bits of a file or directory. A no-op where the platform has none.
+pub fn set_mode(path: &Path, mode: u32) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(mode))
+            .map_err(|err| Error::io_at("change the mode of", path, err))?;
+    }
+    #[cfg(not(unix))]
+    let _ = (path, mode);
+    Ok(())
+}
+
 /// The file a write to `path` should land in: the target of a symlink, otherwise `path` itself.
 fn resolve_target(path: &Path) -> Result<PathBuf> {
     match fs::symlink_metadata(path) {

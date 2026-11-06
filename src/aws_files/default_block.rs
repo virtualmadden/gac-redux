@@ -14,7 +14,7 @@
 //!
 //! `gac select --clear` takes the account and role out again, leaving the rest as it was.
 
-use std::ops::Range;
+use crate::aws_files::section::{self, Section};
 
 const BEGIN: &str = "# BEGIN gac-redux default";
 const END: &str = "# END gac-redux default";
@@ -36,14 +36,6 @@ pub enum Found {
     Managed(Section),
 }
 
-/// A `[default]` section: its byte range in the file (the whole block, when managed) and its
-/// lines, starting with the `[default]` header.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Section {
-    pub range: Range<usize>,
-    pub lines: Vec<String>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DefaultError {
     #[error("line {line}: the gac default block has no END marker")]
@@ -60,16 +52,10 @@ pub enum DefaultError {
     ProfileDefault { line: usize },
 }
 
-/// Finds the `[default]` profile in the config file's `content`.
+/// Finds the `[default]` profile in the config file's `content`. A managed section's range is
+/// the whole block.
 pub fn find(content: &str) -> Result<Found, DefaultError> {
-    let lines: Vec<(usize, &str)> = content
-        .split_inclusive('\n')
-        .scan(0, |offset, raw| {
-            let start = *offset;
-            *offset += raw.len();
-            Some((start, raw))
-        })
-        .collect();
+    let lines = section::lines(content);
     let text = |raw: &str| raw.trim_end_matches(['\n', '\r']).to_owned();
 
     let mut managed: Option<Section> = None;
@@ -116,29 +102,9 @@ pub fn find(content: &str) -> Result<Found, DefaultError> {
                 if hand.is_some() {
                     return Err(DefaultError::TwoSections { line: line_no });
                 }
-                // The section runs to the next header or marker; blank and comment lines at its
-                // end belong to what follows.
-                let mut stop = index + 1;
-                let mut last = index;
-                while stop < lines.len() {
-                    let next = text(lines[stop].1);
-                    if section_name(&next).is_some() || next.starts_with("# BEGIN ") {
-                        break;
-                    }
-                    if !is_blank_or_comment(&next) {
-                        last = stop;
-                    }
-                    stop += 1;
-                }
-                let (last_start, last_raw) = lines[last];
-                hand = Some(Section {
-                    range: start..last_start + last_raw.len(),
-                    lines: lines[index..=last]
-                        .iter()
-                        .map(|(_, raw)| text(raw))
-                        .collect(),
-                });
-                index = last + 1;
+                let found = section::at(&lines, index);
+                index += found.lines.len();
+                hand = Some(found);
                 continue;
             }
             _ => {}
@@ -173,122 +139,23 @@ fn section_name(line: &str) -> Option<Name> {
     })
 }
 
-fn is_blank_or_comment(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';')
+/// A new `[default]` section with no keys.
+pub fn empty() -> Section {
+    Section::new("[default]")
 }
 
-impl Section {
-    /// A new `[default]` section with no keys.
-    pub fn empty() -> Self {
-        Self {
-            range: 0..0,
-            lines: vec!["[default]".to_owned()],
-        }
+/// Renders the section as the default block.
+pub fn render(section: &Section, eol: &str) -> String {
+    let mut out = String::new();
+    for line in [BEGIN, NOTICE]
+        .into_iter()
+        .chain(section.lines.iter().map(String::as_str))
+        .chain([END])
+    {
+        out.push_str(line);
+        out.push_str(eol);
     }
-
-    /// The value of `key`, as the AWS CLI reads a simple `key = value` line.
-    pub fn get(&self, key: &str) -> Option<&str> {
-        self.key_lines()
-            .find(|(_, k)| *k == key)
-            .and_then(|(i, _)| self.lines[i].split_once('='))
-            .map(|(_, value)| value.trim())
-    }
-
-    /// Sets `key` to `value`: in place when the key is there, otherwise after the last of the
-    /// `after` keys present, or right after the header.
-    pub fn set(&mut self, key: &str, value: &str, after: &[&str]) {
-        if let Some(index) = self.position(key) {
-            let (left, _) = self.lines[index]
-                .split_once('=')
-                .expect("a key line has `=`");
-            self.lines[index] = format!("{left}= {value}");
-            return;
-        }
-        let anchor = self
-            .key_lines()
-            .filter(|(_, k)| after.contains(k))
-            .map(|(i, _)| self.value_end(i))
-            .max()
-            .unwrap_or(1);
-        self.lines.insert(anchor, format!("{key} = {value}"));
-    }
-
-    /// Removes `key` and its continuation lines.
-    pub fn remove(&mut self, key: &str) {
-        if let Some(index) = self.position(key) {
-            let end = self.value_end(index);
-            self.lines.drain(index..end);
-        }
-    }
-
-    /// Lines up the `=` of every key when the section was written that way (any key padded with
-    /// more than one space), so an added key matches the user's style.
-    pub fn align(&mut self) {
-        let keys: Vec<(usize, String)> = self.key_lines().map(|(i, k)| (i, k.to_owned())).collect();
-        let padded = keys.iter().any(|(i, k)| {
-            self.lines[*i]
-                .strip_prefix(k.as_str())
-                .is_some_and(|rest| rest.starts_with("  "))
-        });
-        if !padded {
-            return;
-        }
-        let width = keys.iter().map(|(_, k)| k.len()).max().unwrap_or(0);
-        for (index, key) in keys {
-            let value = self.lines[index]
-                .split_once('=')
-                .map(|(_, v)| v.trim().to_owned())
-                .unwrap_or_default();
-            self.lines[index] = format!("{key:<width$} = {value}");
-        }
-    }
-
-    /// Renders the section as the default block.
-    pub fn render(&self, eol: &str) -> String {
-        let mut out = String::new();
-        for line in [BEGIN, NOTICE]
-            .into_iter()
-            .chain(self.lines.iter().map(String::as_str))
-            .chain([END])
-        {
-            out.push_str(line);
-            out.push_str(eol);
-        }
-        out
-    }
-
-    fn position(&self, key: &str) -> Option<usize> {
-        self.key_lines().find(|(_, k)| *k == key).map(|(i, _)| i)
-    }
-
-    /// The index and key of every top-level `key = value` line after the header.
-    fn key_lines(&self) -> impl Iterator<Item = (usize, &str)> {
-        self.lines
-            .iter()
-            .enumerate()
-            .skip(1)
-            .filter_map(|(i, line)| {
-                if line.starts_with([' ', '\t']) || is_blank_or_comment(line) {
-                    return None;
-                }
-                let (key, _) = line.split_once('=')?;
-                Some((i, key.trim()))
-            })
-    }
-
-    /// One past the last line of the value that starts at `index`, continuation lines included.
-    fn value_end(&self, index: usize) -> usize {
-        let mut end = index + 1;
-        while self
-            .lines
-            .get(end)
-            .is_some_and(|l| l.starts_with([' ', '\t']) && !l.trim().is_empty())
-        {
-            end += 1;
-        }
-        end
-    }
+    out
 }
 
 #[cfg(test)]
@@ -332,7 +199,7 @@ region = eu-west-1
         section.set(ACCOUNT_KEY, "111122223333", &[SESSION_KEY, "region"]);
         section.set(ROLE_KEY, "ReadOnly", &[ACCOUNT_KEY]);
         section.align();
-        insta::assert_snapshot!(section.render("\n"), @r"
+        insta::assert_snapshot!(render(&section, "\n"), @r"
         # BEGIN gac-redux default
         # Managed by gac-redux: `gac select` replaces this block.
         [default]
@@ -343,7 +210,7 @@ region = eu-west-1
         # END gac-redux default
         ");
 
-        let rendered = HAND.replace(&HAND[section.range.clone()], &section.render("\n"));
+        let rendered = HAND.replace(&HAND[section.range.clone()], &render(&section, "\n"));
         let Found::Managed(mut managed) = find(&rendered).unwrap() else {
             panic!("expected the managed block");
         };
@@ -361,7 +228,7 @@ region = eu-west-1
 
     #[test]
     fn an_unpadded_section_stays_unpadded() {
-        let mut section = Section::empty();
+        let mut section = empty();
         section.set(SESSION_KEY, "corp", &[]);
         section.set(ACCOUNT_KEY, "111122223333", &[SESSION_KEY]);
         section.align();
@@ -398,7 +265,7 @@ region = eu-west-1
             find("# BEGIN gac-redux default\nx = 1\n# END gac-redux default\n").unwrap_err(),
             DefaultError::NoSection { line: 1 }
         );
-        let block = Section::empty().render("\n");
+        let block = render(&empty(), "\n");
         assert!(matches!(
             find(&format!("{block}[default]\n")).unwrap_err(),
             DefaultError::TwoSections { .. }
