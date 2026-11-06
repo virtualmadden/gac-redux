@@ -1,7 +1,8 @@
 # gac-redux
 
-Short-lived AWS credentials through IAM Identity Center, as a single Rust binary that stays
-byte-compatible with the AWS CLI and SDKs. AWS only.
+Short-lived AWS credentials through IAM Identity Center (AWS SSO), as a single Rust binary that
+stays byte-compatible with the AWS CLI and SDKs. One login gives you a profile for every account
+and role you can use, and a list to pick the default from. AWS only.
 
 > **Status: beta.** The package is `gac-redux`; the command it installs is `gac`. The native
 > path described below is ready to use; on-demand credentials (`env`, `exec`,
@@ -82,6 +83,44 @@ With more than one session configured, a command uses `--session NAME`, else the
 Upgrading from the `gac` pre-release: `~/.aws/gac/` is moved to `~/.aws/gac-redux/` on the first
 run, and blocks with `# BEGIN gac sync` markers keep working and get the new markers on the next
 `gac sync`. Rename `GAC_SESSION` and `GAC_LOG` to `GAC_REDUX_SESSION` and `GAC_REDUX_LOG`.
+
+## Questions
+
+### How do I get an AWS CLI profile for every account and role?
+
+`gac sync`. `aws configure sso` writes one profile per run; `gac sync` asks Identity Center for
+every account and role you can use and writes a profile for each, then prunes the ones you lost
+access to on the next run. `--name` sets the profile names (default `{account}/{role}`), and
+`--include`/`--exclude` filter by glob.
+
+### How do I set the default AWS SSO profile?
+
+`gac select` lists every account and role; pick one with the arrow keys and Enter, and the AWS CLI
+and SDKs use it whenever no profile is named. `gac select payments-prod/ReadOnly` does the same
+without the list, and `gac select --clear` goes back to no default, so a command without
+`--profile` cannot land in the wrong account.
+
+### Does it work with `aws sso login` and the AWS SDKs?
+
+Yes. `gac` writes the same token cache and the same native `sso-session` profiles the AWS CLI
+does, so `aws sso login`, `aws sso logout`, the AWS CLI and every SDK that supports Identity
+Center share one login, and you can stop using `gac` at any time without breaking a profile.
+
+### Does it write access keys to disk?
+
+No. The profiles name an account and role, and the SDKs fetch short-lived role credentials and
+refresh them themselves. `~/.aws/credentials` is never written.
+
+### Can I log in over SSH or on a machine without a browser?
+
+Yes. Over SSH, `gac login` uses a device code: it prints a link and a code to open on any other
+device. `--device-code` forces that anywhere, and `--no-browser` prints the link instead of opening
+it.
+
+### Something is wrong with my AWS files. Where do I start?
+
+`gac doctor` checks the AWS config, the credentials file and the caches without changing anything,
+and suggests a fix for each problem it finds.
 
 ## Development
 
