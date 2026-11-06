@@ -3,9 +3,21 @@
 Short-lived AWS credentials through IAM Identity Center, as a single Rust binary that stays
 byte-compatible with the AWS CLI and SDKs. AWS only.
 
-> **Status: pre-release.** The package is `gac-redux`; the command it installs is `gac`. The
-> native path described below works today; on-demand credentials (`env`, `exec`,
-> `credential-process`, `console`) come next.
+> **Status: beta.** The package is `gac-redux`; the command it installs is `gac`. The native
+> path described below is ready to use; on-demand credentials (`env`, `exec`,
+> `credential-process`, `console`) come next. Please report problems in
+> [issues](https://github.com/virtualmadden/gac-redux/issues).
+
+## Install
+
+```console
+$ brew install virtualmadden/tap/gac-redux
+```
+
+Or download the archive for your platform from
+[releases](https://github.com/virtualmadden/gac-redux/releases) (macOS and Linux on arm64 and
+x86_64, Windows on x86_64), check it against `SHA256SUMS`, and put `gac` on your `PATH`. To build
+from source instead: `cargo install --locked --git https://github.com/virtualmadden/gac-redux`.
 
 ## How it works
 
@@ -84,3 +96,8 @@ interop with the real AWS CLI v2 (it must be on `PATH`; set `GAC_REDUX_REQUIRE_A
 instead of skipping when it is missing) and with the Rust SDK's `aws-config`.
 
 Requires Rust 1.94.1 or newer.
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT), at your option.
