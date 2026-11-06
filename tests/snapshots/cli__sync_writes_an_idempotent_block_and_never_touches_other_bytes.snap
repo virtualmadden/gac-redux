@@ -3,8 +3,8 @@ source: tests/cli.rs
 expression: "block.replace(\"\\r\\n\", \"\\n\")"
 ---
 
-# BEGIN gac sync session=corp mode=sso name={account}/{role}
-# Managed by gac: edits inside this block are replaced on the next sync.
+# BEGIN gac-redux sync session=corp mode=sso name={account}/{role}
+# Managed by gac-redux: edits inside this block are replaced on the next sync.
 [profile payments-prod/AdministratorAccess]
 sso_session = corp
 sso_account_id = 111122223333
@@ -29,4 +29,4 @@ sso_role_name = ReadOnly
 sso_session = corp
 sso_account_id = 444455556666
 sso_role_name = ReadOnly
-# END gac sync session=corp
+# END gac-redux sync session=corp

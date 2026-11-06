@@ -107,7 +107,7 @@ pub fn write_atomic(path: &Path, contents: &[u8], policy: ModePolicy) -> Result<
 
     let existing_mode = mode(&target);
     let mut tmp = tempfile::Builder::new()
-        .prefix(".gac-")
+        .prefix(".gac-redux-")
         .suffix(".tmp")
         .tempfile_in(dir)
         .map_err(|err| Error::io_at("create a temp file in", dir, err))?;

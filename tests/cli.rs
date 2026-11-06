@@ -43,13 +43,13 @@ fn subcommand_help_lists_gac_session_inline() {
 
 /// The block `gac setup` writes for the `corp` session.
 const SETUP_BLOCK: &str = "\
-# BEGIN gac sync session=corp
-# Managed by gac: edits inside this block are replaced on the next sync.
+# BEGIN gac-redux sync session=corp
+# Managed by gac-redux: edits inside this block are replaced on the next sync.
 [sso-session corp]
 sso_start_url = https://mock-example.awsapps.com/start
 sso_region = us-west-2
 sso_registration_scopes = sso:account:access
-# END gac sync session=corp
+# END gac-redux sync session=corp
 ";
 
 #[test]
@@ -108,9 +108,9 @@ fn setup_writes_its_session_inside_a_managed_block() {
             "session=corp mode=sso name={account}/{role}\n",
             1,
         )
-        .replace("# END gac sync session=corp\n", "");
+        .replace("# END gac-redux sync session=corp\n", "");
     assert!(block.starts_with(&format!("{head}\n[profile ")), "{block}");
-    assert!(block.ends_with("# END gac sync session=corp\n"));
+    assert!(block.ends_with("# END gac-redux sync session=corp\n"));
     assert!(block.contains("[profile payments-prod/ReadOnly]\nsso_session = corp\n"));
     sandbox
         .gac()
@@ -305,10 +305,11 @@ fn several_sessions_need_a_choice() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("corp, other"))
+        .stderr(predicate::str::contains("gac select"))
         .stderr(predicate::str::contains("--session"));
     sandbox
         .gac()
-        .env("GAC_SESSION", "corp")
+        .env("GAC_REDUX_SESSION", "corp")
         .args(["list"])
         .assert()
         .code(3);
@@ -322,7 +323,7 @@ fn an_exported_gac_session_yields_to_profile_and_all() {
     ));
     sandbox
         .gac()
-        .env("GAC_SESSION", "other")
+        .env("GAC_REDUX_SESSION", "other")
         .args(["login", "--device-code", "--no-browser", "--profile", "dev"])
         .assert()
         .success()
@@ -330,7 +331,7 @@ fn an_exported_gac_session_yields_to_profile_and_all() {
     assert!(sandbox.token_path("corp").exists());
     sandbox
         .gac()
-        .env("GAC_SESSION", "other")
+        .env("GAC_REDUX_SESSION", "other")
         .args(["logout", "--all"])
         .assert()
         .success()
@@ -343,6 +344,168 @@ fn an_exported_gac_session_yields_to_profile_and_all() {
         .assert()
         .code(2)
         .stderr(predicate::str::contains("cannot be used with"));
+}
+
+/// The `corp` session plus a second one, so a command has to be told which to use.
+fn two_sessions() -> Sandbox {
+    let sandbox = Sandbox::new();
+    sandbox.write_config(&format!(
+        "{SESSION}\n[sso-session other]\nsso_start_url = https://other.awsapps.com/start\nsso_region = us-east-1\n"
+    ));
+    sandbox
+}
+
+#[test]
+fn select_saves_a_default_session_that_commands_use() {
+    let sandbox = two_sessions();
+    sandbox
+        .gac()
+        .args(["select", "--session", "corp"])
+        .assert()
+        .success()
+        .stdout("")
+        .stderr(predicate::str::contains(
+            "The default session is now `corp`.",
+        ));
+    assert_eq!(
+        std::fs::read_to_string(sandbox.home().join(".aws/gac-redux/selected-session")).unwrap(),
+        "corp\n"
+    );
+    sandbox
+        .gac()
+        .args(["login", "--device-code", "--no-browser"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Logged in to session `corp`"));
+    sandbox.gac().arg("list").assert().success();
+
+    let status = sandbox.gac().arg("status").assert().success();
+    assert!(stdout(status.get_output()).contains("session corp (default)\n"));
+    let json = sandbox.gac().args(["status", "--json"]).assert().success();
+    let json: Value = serde_json::from_slice(&json.get_output().stdout).unwrap();
+    assert_eq!(json["sessions"][0]["selected"], true);
+    assert_eq!(json["sessions"][1]["selected"], false);
+
+    // --session and GAC_REDUX_SESSION both win over the default.
+    sandbox
+        .gac()
+        .args(["--session", "other", "list"])
+        .assert()
+        .code(3);
+    sandbox
+        .gac()
+        .env("GAC_REDUX_SESSION", "other")
+        .args(["list"])
+        .assert()
+        .code(3);
+    sandbox
+        .gac()
+        .env("GAC_REDUX_SESSION", "other")
+        .args(["select", "--session", "corp"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "GAC_REDUX_SESSION=other is set and takes precedence",
+        ));
+
+    sandbox
+        .gac()
+        .args(["select", "--clear"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Cleared the default session."));
+    sandbox
+        .gac()
+        .arg("list")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("gac select"));
+}
+
+#[test]
+fn select_without_a_terminal_needs_a_session_name() {
+    let sandbox = two_sessions();
+    sandbox
+        .gac()
+        .arg("select")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("interactive terminal"))
+        .stderr(predicate::str::contains("--session NAME"));
+    sandbox
+        .gac()
+        .args(["select", "--session", "nope"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("no [sso-session nope]"))
+        .stderr(predicate::str::contains("corp, other"));
+    sandbox
+        .gac()
+        .args(["select", "--session", "corp", "--clear"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("cannot be used with '--clear'"));
+    assert!(
+        !sandbox
+            .home()
+            .join(".aws/gac-redux/selected-session")
+            .exists()
+    );
+}
+
+#[test]
+fn a_default_session_that_is_gone_is_ignored_with_a_warning() {
+    let sandbox = two_sessions();
+    sandbox
+        .gac()
+        .args(["select", "--session", "other"])
+        .assert()
+        .success();
+    sandbox.write_config(SESSION);
+    sandbox
+        .gac()
+        .args(["login", "--device-code", "--no-browser"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "ignoring the default session `other`",
+        ))
+        .stderr(predicate::str::contains("Logged in to session `corp`"));
+}
+
+#[test]
+fn state_and_blocks_from_before_the_rename_are_migrated() {
+    let sandbox = Sandbox::new();
+    let legacy_block = "# BEGIN gac sync session=corp mode=sso name={account}/{role}\n\
+                        # Managed by gac: edits inside this block are replaced on the next sync.\n\
+                        [profile old/Role]\n\
+                        sso_session = corp\n\
+                        sso_account_id = 111122223333\n\
+                        sso_role_name = Role\n\
+                        # END gac sync session=corp\n";
+    sandbox.write_config(&format!("{SESSION}\n{legacy_block}"));
+    let legacy_state = sandbox.home().join(".aws/gac");
+    std::fs::create_dir_all(legacy_state.join("inventory")).unwrap();
+    login_device(&sandbox);
+    assert!(!legacy_state.exists(), "the old state directory was moved");
+    assert!(sandbox.home().join(".aws/gac-redux/inventory").is_dir());
+
+    let status = sandbox.gac().arg("status").assert().success();
+    assert!(stdout(status.get_output()).contains("1 profile, name={account}/{role}"));
+    sandbox.gac().arg("sync").assert().success();
+    let config = sandbox.config();
+    assert!(!config.contains("# BEGIN gac sync"), "{config}");
+    assert!(!config.contains("[profile old/Role]"), "{config}");
+    assert!(
+        config.contains("# BEGIN gac-redux sync session=corp mode=sso name={account}/{role}\n")
+    );
+    assert!(config.contains("# Managed by gac-redux:"));
+    assert_eq!(
+        config
+            .matches("# END gac-redux sync session=corp\n")
+            .count(),
+        1
+    );
 }
 
 #[test]
@@ -570,7 +733,7 @@ fn sync_writes_an_idempotent_block_and_never_touches_other_bytes() {
     let dry = sandbox.gac().args(["sync", "--dry-run"]).assert().success();
     let diff = String::from_utf8_lossy(&dry.get_output().stdout).into_owned();
     assert!(
-        diff.contains("+# BEGIN gac sync session=corp mode=sso name={account}/{role}"),
+        diff.contains("+# BEGIN gac-redux sync session=corp mode=sso name={account}/{role}"),
         "{diff}"
     );
     assert!(diff.contains("+[profile payments-prod/ReadOnly]"));
@@ -619,8 +782,10 @@ fn sync_writes_an_idempotent_block_and_never_touches_other_bytes() {
         .stderr(predicate::str::contains("(0 added, 4 removed)"));
     let pruned = sandbox.config();
     let begin = pruned.find("# BEGIN gac").unwrap();
-    let end = pruned.find("# END gac sync session=corp\r\n").unwrap()
-        + "# END gac sync session=corp\r\n".len();
+    let end = pruned
+        .find("# END gac-redux sync session=corp\r\n")
+        .unwrap()
+        + "# END gac-redux sync session=corp\r\n".len();
     assert_eq!(&pruned[..begin], &edited[..begin]);
     assert_eq!(&pruned[end..], "[profile later]\r\nregion = ap-south-1\r\n");
     assert!(!pruned.contains("AdministratorAccess"));
@@ -647,7 +812,7 @@ fn sync_remembers_its_settings_in_the_begin_line() {
         .success();
     let config = sandbox.config();
     assert!(config.contains(
-        "# BEGIN gac sync session=corp mode=sso name={account_id}.{role} region=eu-west-1 include=*/ReadOnly exclude=sandbox/*\n"
+        "# BEGIN gac-redux sync session=corp mode=sso name={account_id}.{role} region=eu-west-1 include=*/ReadOnly exclude=sandbox/*\n"
     ));
     assert!(config.contains("[profile 111122223333.ReadOnly]\nsso_session = corp\nsso_account_id = 111122223333\nsso_role_name = ReadOnly\nregion = eu-west-1\n"));
     assert!(!config.contains("777788889999"));
@@ -663,7 +828,7 @@ fn sync_remembers_its_settings_in_the_begin_line() {
     assert!(
         sandbox
             .config()
-            .contains("# BEGIN gac sync session=corp mode=sso name={account}/{role}\n")
+            .contains("# BEGIN gac-redux sync session=corp mode=sso name={account}/{role}\n")
     );
 }
 
@@ -705,7 +870,7 @@ fn sync_never_creates_mixed_credentials() {
 #[test]
 fn sync_refuses_to_write_around_broken_markers() {
     let sandbox = Sandbox::new();
-    let broken = format!("{SESSION}\n# BEGIN gac sync session=corp mode=sso\n[profile x]\n");
+    let broken = format!("{SESSION}\n# BEGIN gac-redux sync session=corp mode=sso\n[profile x]\n");
     sandbox.write_config(&broken);
     login_device(&sandbox);
     sandbox
@@ -923,7 +1088,7 @@ fn doctor_flags_problems_with_fixes() {
 #[test]
 fn the_fix_for_an_orphaned_block_is_one_setup_accepts() {
     let sandbox = Sandbox::new();
-    let block = "# BEGIN gac sync session=corp mode=sso\n[profile dev]\nsso_session = corp\n# END gac sync session=corp\n";
+    let block = "# BEGIN gac-redux sync session=corp mode=sso\n[profile dev]\nsso_session = corp\n# END gac-redux sync session=corp\n";
     sandbox.write_config(&format!("[default]\nregion = eu-west-1\n\n{block}"));
     let hint =
         "delete the gac block for session `corp` by hand, then run `gac setup --session corp`";

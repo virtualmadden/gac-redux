@@ -1,7 +1,8 @@
 //! Interactive prompts. `inquire` draws on stderr, so stdout stays clean.
 
+use inquire::list_option::ListOption;
 use inquire::validator::Validation;
-use inquire::{InquireError, Text};
+use inquire::{InquireError, Select, Text};
 
 use crate::error::{Error, Result};
 
@@ -24,14 +25,34 @@ pub fn text(
     if let Some(help) = help {
         prompt = prompt.with_help_message(help);
     }
-    match prompt.prompt() {
-        Ok(answer) => Ok(answer.trim().to_owned()),
-        Err(InquireError::OperationInterrupted | InquireError::OperationCanceled) => {
-            Err(Error::Interrupted)
-        }
-        Err(err) => Err(Error::io(
-            "the prompt failed",
-            std::io::Error::other(err.to_string()),
-        )),
+    prompt
+        .prompt()
+        .map(|answer| answer.trim().to_owned())
+        .map_err(prompt_error)
+}
+
+/// Asks for one of `options` with the arrow keys, starting on `cursor`, and returns its index.
+/// The answer is echoed as its entry in `answers`, which is shorter than the full row.
+pub fn select(
+    message: &str,
+    options: Vec<String>,
+    answers: &[&str],
+    cursor: usize,
+    help: &str,
+) -> Result<usize> {
+    let answer = |choice: ListOption<&String>| answers[choice.index].to_owned();
+    Select::new(message, options)
+        .with_starting_cursor(cursor)
+        .with_help_message(help)
+        .with_formatter(&answer)
+        .raw_prompt()
+        .map(|choice| choice.index)
+        .map_err(prompt_error)
+}
+
+fn prompt_error(err: InquireError) -> Error {
+    match err {
+        InquireError::OperationInterrupted | InquireError::OperationCanceled => Error::Interrupted,
+        err => Error::io("the prompt failed", std::io::Error::other(err.to_string())),
     }
 }

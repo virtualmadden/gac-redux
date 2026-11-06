@@ -151,7 +151,7 @@ impl Sandbox {
     }
 
     /// An `aws` command confined to the sandbox, or `None` when the AWS CLI is not installed.
-    /// With `GAC_REQUIRE_AWS_CLI` set (as in CI), a missing CLI fails the test instead.
+    /// With `GAC_REDUX_REQUIRE_AWS_CLI` set (as in CI), a missing CLI fails the test instead.
     pub fn aws(&self) -> Option<Command> {
         aws_cli_available().then(|| {
             let mut cmd = Command::new("aws");
@@ -170,8 +170,8 @@ fn aws_cli_available() -> bool {
             .output()
             .is_ok_and(|o| o.status.success());
         assert!(
-            found || std::env::var_os("GAC_REQUIRE_AWS_CLI").is_none(),
-            "GAC_REQUIRE_AWS_CLI is set but the AWS CLI is not on PATH"
+            found || std::env::var_os("GAC_REDUX_REQUIRE_AWS_CLI").is_none(),
+            "GAC_REDUX_REQUIRE_AWS_CLI is set but the AWS CLI is not on PATH"
         );
         if !found {
             eprintln!("skipping AWS CLI interop: `aws` is not on PATH");

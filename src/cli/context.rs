@@ -23,26 +23,59 @@ pub struct Context {
     pub paths: AwsPaths,
     /// `--session`, from the command line.
     session: Option<SessionName>,
-    /// `GAC_SESSION`: like `--session`, except that `--profile` wins over it.
+    /// `GAC_REDUX_SESSION`: like `--session`, except that `--profile` wins over it.
     env_session: Option<SessionName>,
+    /// The default session `gac select` saved.
+    selected: Option<SessionName>,
     no_input: bool,
 }
 
 impl Context {
     pub fn new(session: Option<&str>, no_input: bool) -> Result<Self> {
+        let paths = AwsPaths::from_env()?;
+        paths.migrate_legacy_state_dir();
+        let selected = read_selected(&selected_path(&paths));
         Ok(Self {
-            paths: AwsPaths::from_env()?,
+            paths,
             session: session.map(str::parse).transpose()?,
-            env_session: std::env::var("GAC_SESSION")
+            env_session: std::env::var("GAC_REDUX_SESSION")
                 .ok()
                 .filter(|v| !v.is_empty())
                 .map(|v| v.parse())
                 .transpose()?,
+            selected,
             no_input,
         })
     }
 
-    /// `--session`, else `GAC_SESSION`.
+    /// `--session` as typed on the command line; `GAC_REDUX_SESSION` does not count.
+    pub fn typed_session(&self) -> Option<&SessionName> {
+        self.session.as_ref()
+    }
+
+    /// `GAC_REDUX_SESSION`.
+    pub fn env_session(&self) -> Option<&SessionName> {
+        self.env_session.as_ref()
+    }
+
+    /// The default session `gac select` saved, whether or not it is still configured.
+    pub fn selected(&self) -> Option<&SessionName> {
+        self.selected.as_ref()
+    }
+
+    /// Saves `name` as the default session, or forgets the default with `None`.
+    pub fn save_selected(&self, name: Option<&SessionName>) -> Result<()> {
+        let path = selected_path(&self.paths);
+        match name {
+            Some(name) => {
+                fsx::ensure_private_dir(&self.paths.state_dir())?;
+                fsx::write_atomic(&path, format!("{name}\n").as_bytes(), ModePolicy::Private)
+            }
+            None => fsx::remove_if_exists(&path).map(drop),
+        }
+    }
+
+    /// `--session`, else `GAC_REDUX_SESSION`.
     pub fn session_flag(&self) -> Option<&SessionName> {
         self.session.as_ref().or(self.env_session.as_ref())
     }
@@ -67,7 +100,7 @@ impl Context {
                 "the gac markers in {} are broken: {err}",
                 self.paths.config_file().display()
             ))
-            .with_hint("repair or delete the `# BEGIN gac` / `# END gac` lines by hand")
+            .with_hint("repair or delete the `# BEGIN gac-redux` / `# END gac-redux` lines by hand")
         })
     }
 
@@ -120,7 +153,7 @@ impl Context {
     }
 
     /// The session a command acts on: `--session`, else the session of `--profile`, else
-    /// `GAC_SESSION`, else the only configured session.
+    /// `GAC_REDUX_SESSION`, else the default `gac select` saved, else the only configured session.
     pub fn resolve_session(&self, files: &AwsFiles, profile: Option<&str>) -> Result<Session> {
         if let Some(name) = &self.session {
             return Ok(files.sso_session(name)?.into());
@@ -130,6 +163,14 @@ impl Context {
         }
         if let Some(name) = &self.env_session {
             return Ok(files.sso_session(name)?.into());
+        }
+        if let Some(name) = &self.selected {
+            if files.has_session(name.as_str()) {
+                return Ok(files.sso_session(name)?.into());
+            }
+            ui::warn(format!(
+                "ignoring the default session `{name}`: it is no longer configured (run `gac select`)"
+            ));
         }
         match files.session_names().as_slice() {
             [] => Err(
@@ -141,7 +182,24 @@ impl Context {
                 "more than one session is configured: {}",
                 many.join(", ")
             ))
-            .with_hint("pass --session NAME, or set GAC_SESSION")),
+            .with_hint("run `gac select` to pick a default, or pass --session NAME")),
+        }
+    }
+}
+
+/// Where `gac select` keeps the default session.
+fn selected_path(paths: &AwsPaths) -> std::path::PathBuf {
+    paths.state_dir().join("selected-session")
+}
+
+/// The saved default session. A missing or unreadable file means there is none.
+fn read_selected(path: &std::path::Path) -> Option<SessionName> {
+    let text = fsx::read_text_optional(path).ok().flatten()?;
+    match text.trim().parse() {
+        Ok(name) => Some(name),
+        Err(err) => {
+            tracing::debug!(path = %path.display(), %err, "ignoring an unreadable default session");
+            None
         }
     }
 }

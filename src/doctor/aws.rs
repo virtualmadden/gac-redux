@@ -255,7 +255,7 @@ fn check_blocks(report: &mut Report, files: &AwsFiles) {
         Err(err) => report.fail(
             "managed-blocks",
             format!("the gac markers in the config file are broken: {err}"),
-            "repair or delete the `# BEGIN gac` / `# END gac` lines by hand; gac will not write until they are fixed",
+            "repair or delete the `# BEGIN gac-redux` / `# END gac-redux` lines by hand; gac will not write until they are fixed",
         ),
         Ok(blocks) => {
             let mut orphaned = false;
@@ -305,8 +305,8 @@ sso_session = corp
 sso_start_url = https://old.awsapps.com/start
 sso_region = us-east-1
 
-# BEGIN gac sync session=gone mode=sso
-# END gac sync session=gone
+# BEGIN gac-redux sync session=gone mode=sso
+# END gac-redux sync session=gone
 ";
         let files = AwsFiles::parse(config.into(), "[dev]\naws_access_key_id = AKIA\n")
             .await

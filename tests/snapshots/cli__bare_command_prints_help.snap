@@ -13,6 +13,7 @@ Commands:
   setup   Create an [sso-session], or reuse one `aws configure sso` already wrote
   login   Sign in to IAM Identity Center and write the shared token cache
   logout  Revoke the session, delete its cached token and the AWS CLI's SSO role credentials
+  select  Pick the default session from a list, or set it with --session
   status  Show sessions, token and registration expiry, and managed blocks. No secrets
   sync    Write native sso-session profiles for your accounts and roles into a managed block
   list    List the accounts and roles you can use
@@ -28,9 +29,9 @@ Options:
 
 Global options:
       --session <NAME>
-          The [sso-session] to use; needed only when more than one is configured
+          The [sso-session] to use, overriding the default from `gac select`
           
-          [env: GAC_SESSION]
+          [env: GAC_REDUX_SESSION]
 
       --no-input
           Never prompt; fail with a hint instead

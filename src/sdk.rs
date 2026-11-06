@@ -10,7 +10,7 @@ use crate::domain::Region;
 /// setup that stayed robust when the portal throttles a fan-out.
 pub async fn load(region: &Region) -> SdkConfig {
     aws_config::defaults(BehaviorVersion::latest())
-        .app_name(AppName::new("gac").expect("a valid app name"))
+        .app_name(AppName::new("gac-redux").expect("a valid app name"))
         .region(aws_config::Region::new(region.as_str().to_owned()))
         .no_credentials()
         .retry_config(RetryConfig::adaptive())
