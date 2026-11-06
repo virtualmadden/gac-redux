@@ -1,0 +1,19 @@
+# Weekly, one grouped PR per ecosystem. cargo-deny in CI checks advisories and licenses on each
+# of them.
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      cargo:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
