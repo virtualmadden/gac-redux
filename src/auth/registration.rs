@@ -1,7 +1,7 @@
 //! OIDC client registration, cached for its 90-day lifetime.
 //!
 //! The cache file sits beside the tokens, keyed the way botocore keys its own registrations but
-//! with `"tool": "gac"`, so gac never reads or clobbers the AWS CLI's entry. It holds no
+//! with `"tool": "gac-redux"`, so gac never reads or clobbers the AWS CLI's entry. It holds no
 //! `accessToken`, so `aws sso logout` leaves it alone, as it does botocore's.
 
 use std::path::Path;
@@ -95,7 +95,7 @@ pub fn cache_key(session: &Session, grant: Grant) -> String {
         scopes: &scopes,
         session_name: session.name().map(SessionName::as_str),
         start_url: session.start_url.as_str(),
-        tool: "gac",
+        tool: "gac-redux",
     };
     hex::encode(Sha1::digest(botocore_json::to_string(&args).as_bytes()))
 }
@@ -122,7 +122,10 @@ pub async fn obtain(
     }
 
     let scopes = scopes_for(session);
-    let client_name = format!("gac-{}", session.name().map_or("legacy", |n| n.as_str()));
+    let client_name = format!(
+        "gac-redux-{}",
+        session.name().map_or("legacy", |n| n.as_str())
+    );
     let request = match grant {
         Grant::AuthorizationCode => RegisterRequest {
             client_name: &client_name,
@@ -177,7 +180,7 @@ mod tests {
     #[test]
     fn key_matches_python_sorted_json() {
         let named = session(SessionKind::Named("corp".parse().unwrap()));
-        // python3 -c 'import json,hashlib; print(hashlib.sha1(json.dumps({"tool": "gac",
+        // python3 -c 'import json,hashlib; print(hashlib.sha1(json.dumps({"tool": "gac-redux",
         //   "startUrl": "https://corp.awsapps.com/start", "region": "us-east-1",
         //   "scopes": ["sso:account:access"], "session_name": "corp",
         //   "grantTypes": ["authorization_code", "refresh_token"]}, sort_keys=True).encode()).hexdigest())'
@@ -187,11 +190,11 @@ mod tests {
             scopes: &["sso:account:access".to_owned()],
             session_name: Some("corp"),
             start_url: "https://corp.awsapps.com/start",
-            tool: "gac",
+            tool: "gac-redux",
         };
         assert_eq!(
             botocore_json::to_string(&args),
-            r#"{"grantTypes": ["authorization_code", "refresh_token"], "region": "us-east-1", "scopes": ["sso:account:access"], "session_name": "corp", "startUrl": "https://corp.awsapps.com/start", "tool": "gac"}"#
+            r#"{"grantTypes": ["authorization_code", "refresh_token"], "region": "us-east-1", "scopes": ["sso:account:access"], "session_name": "corp", "startUrl": "https://corp.awsapps.com/start", "tool": "gac-redux"}"#
         );
         assert_ne!(
             cache_key(&named, Grant::AuthorizationCode),

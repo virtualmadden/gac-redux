@@ -5,21 +5,28 @@
 //! appended. Every byte outside a block is left exactly as it was.
 //!
 //! ```text
-//! # BEGIN gac sync session=corp mode=sso name={account}/{role}
-//! # Managed by gac: edits inside this block are replaced on the next sync.
+//! # BEGIN gac-redux sync session=corp mode=sso name={account}/{role}
+//! # Managed by gac-redux: edits inside this block are replaced on the next sync.
 //! [profile payments-prod/ReadOnly]
 //! ...
-//! # END gac sync session=corp
+//! # END gac-redux sync session=corp
 //! ```
+//!
+//! Blocks written before the rename, with `# BEGIN gac sync` markers, are read the same way and
+//! get the current markers the next time they are written.
 
 use std::fmt::Write as _;
 use std::ops::Range;
 
 use percent_encoding::{AsciiSet, CONTROLS, percent_decode_str, utf8_percent_encode};
 
-const BEGIN: &str = "# BEGIN gac sync ";
-const END: &str = "# END gac sync ";
-pub const NOTICE: &str = "# Managed by gac: edits inside this block are replaced on the next sync.";
+const BEGIN: &str = "# BEGIN gac-redux sync ";
+const END: &str = "# END gac-redux sync ";
+/// The markers of blocks written before the project was renamed.
+const LEGACY_BEGIN: &str = "# BEGIN gac sync ";
+const LEGACY_END: &str = "# END gac sync ";
+pub const NOTICE: &str =
+    "# Managed by gac-redux: edits inside this block are replaced on the next sync.";
 
 /// Characters escaped in BEGIN-line values, so a value is always one space-free token.
 const VALUE_ESCAPES: &AsciiSet = &CONTROLS.add(b' ').add(b'%').add(b'=');
@@ -114,7 +121,7 @@ pub fn scan(content: &str) -> Result<Vec<Block>, MarkerError> {
     for (index, raw) in content.split_inclusive('\n').enumerate() {
         let line_no = index + 1;
         let line = raw.trim_end_matches(['\n', '\r']);
-        if let Some(rest) = line.strip_prefix(BEGIN) {
+        if let Some(rest) = strip_marker(line, BEGIN, LEGACY_BEGIN) {
             if let Some((_, open_line, _)) = &open {
                 return Err(MarkerError::Nested {
                     line: line_no,
@@ -129,7 +136,7 @@ pub fn scan(content: &str) -> Result<Vec<Block>, MarkerError> {
                 });
             }
             open = Some((offset, line_no, header));
-        } else if let Some(rest) = line.strip_prefix(END) {
+        } else if let Some(rest) = strip_marker(line, END, LEGACY_END) {
             let Some((start, _, header)) = open.take() else {
                 return Err(MarkerError::StrayEnd { line: line_no });
             };
@@ -159,6 +166,11 @@ pub fn scan(content: &str) -> Result<Vec<Block>, MarkerError> {
         });
     }
     Ok(blocks)
+}
+
+fn strip_marker<'a>(line: &'a str, current: &str, legacy: &str) -> Option<&'a str> {
+    line.strip_prefix(current)
+        .or_else(|| line.strip_prefix(legacy))
 }
 
 fn parse_header(rest: &str) -> Option<Header> {
@@ -268,11 +280,11 @@ mod tests {
     fn renders_the_documented_shape() {
         let rendered = block("corp", &["[profile a/b]", "sso_session = corp"], "\n");
         insta::assert_snapshot!(rendered, @r"
-        # BEGIN gac sync session=corp mode=sso name={account}/{role}
-        # Managed by gac: edits inside this block are replaced on the next sync.
+        # BEGIN gac-redux sync session=corp mode=sso name={account}/{role}
+        # Managed by gac-redux: edits inside this block are replaced on the next sync.
         [profile a/b]
         sso_session = corp
-        # END gac sync session=corp
+        # END gac-redux sync session=corp
         ");
     }
 
@@ -286,7 +298,7 @@ mod tests {
             ],
         };
         let rendered = render(&original, &[], "\n");
-        assert!(rendered.starts_with("# BEGIN gac sync session=corp include=pay*%20with%20space%3Dand%25percent include=dev/*\n"));
+        assert!(rendered.starts_with("# BEGIN gac-redux sync session=corp include=pay*%20with%20space%3Dand%25percent include=dev/*\n"));
         let blocks = scan(&rendered).unwrap();
         assert_eq!(blocks[0].header, original);
         assert_eq!(blocks[0].header.get_all("include").count(), 2);
@@ -325,8 +337,8 @@ mod tests {
 
     #[test]
     fn rejects_broken_markers() {
-        let begin = "# BEGIN gac sync session=a mode=sso\n";
-        let end_a = "# END gac sync session=a\n";
+        let begin = "# BEGIN gac-redux sync session=a mode=sso\n";
+        let end_a = "# END gac-redux sync session=a\n";
         assert_eq!(
             scan(&format!("{begin}x\n")).unwrap_err(),
             MarkerError::Unterminated {
@@ -340,7 +352,7 @@ mod tests {
             MarkerError::Nested { .. }
         ));
         assert!(matches!(
-            scan(&format!("{begin}# END gac sync session=b\n")).unwrap_err(),
+            scan(&format!("{begin}# END gac-redux sync session=b\n")).unwrap_err(),
             MarkerError::Mismatched { .. }
         ));
         assert!(matches!(
@@ -348,7 +360,7 @@ mod tests {
             MarkerError::Duplicate { .. }
         ));
         assert!(matches!(
-            scan("# BEGIN gac sync nosession\n").unwrap_err(),
+            scan("# BEGIN gac-redux sync nosession\n").unwrap_err(),
             MarkerError::BadBegin { .. }
         ));
     }
@@ -360,6 +372,24 @@ mod tests {
         let content = format!("{a}\n{b}");
         let out = upsert(&content, "b", &block("b", &["b2"], "\n")).unwrap();
         assert_eq!(out, format!("{a}\n{}", block("b", &["b2"], "\n")));
+    }
+
+    #[test]
+    fn rewrites_a_legacy_block_with_the_current_markers() {
+        let user = "[profile mine]\nregion = us-east-1\n\n";
+        let legacy = "# BEGIN gac sync session=corp mode=sso name={account}/{role}\n\
+                      # Managed by gac: edits inside this block are replaced on the next sync.\n\
+                      old\n\
+                      # END gac sync session=corp\n";
+        let content = format!("{user}{legacy}[profile after]\n");
+        let blocks = scan(&content).unwrap();
+        assert_eq!(blocks[0].header, header("corp"));
+        assert_eq!(&content[blocks[0].range.clone()], legacy);
+        let out = upsert(&content, "corp", &block("corp", &["new"], "\n")).unwrap();
+        assert_eq!(
+            out,
+            format!("{user}{}[profile after]\n", block("corp", &["new"], "\n"))
+        );
     }
 
     /// Arbitrary user-owned config text: any lines that are not gac markers.

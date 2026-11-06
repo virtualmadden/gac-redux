@@ -5,6 +5,7 @@ mod doctor;
 mod list;
 mod login;
 mod logout;
+mod select;
 mod setup;
 mod status;
 mod sync;
@@ -28,21 +29,21 @@ const GLOBAL: &str = "Global options";
 /// account and role assignments, and shares its token cache with the AWS CLI and SDKs.
 #[derive(Debug, Parser)]
 #[command(
-    name = "gac",
+    name = "gac-redux",
     bin_name = "gac",
     version,
     arg_required_else_help = true,
     max_term_width = 100
 )]
 pub struct Cli {
-    /// The [sso-session] to use; needed only when more than one is configured.
+    /// The [sso-session] to use, overriding the default from `gac select`.
     // `run` keeps the value only when typed on the command line: clap counts an env value as the
-    // flag being given, so --profile and --all would conflict with an exported GAC_SESSION.
-    // Context reads GAC_SESSION itself; `env` is here for the help text.
+    // flag being given, so --profile and --all would conflict with an exported GAC_REDUX_SESSION.
+    // Context reads GAC_REDUX_SESSION itself; `env` is here for the help text.
     #[arg(
         long,
         global = true,
-        env = "GAC_SESSION",
+        env = "GAC_REDUX_SESSION",
         hide_env_values = true,
         value_name = "NAME",
         help_heading = GLOBAL
@@ -69,6 +70,8 @@ enum Command {
     Login(LoginArgs),
     /// Revoke the session, delete its cached token and the AWS CLI's SSO role credentials.
     Logout(LogoutArgs),
+    /// Pick the default session from a list, or set it with --session.
+    Select(SelectArgs),
     /// Show sessions, token and registration expiry, and managed blocks. No secrets.
     Status(StatusArgs),
     /// Write native sso-session profiles for your accounts and roles into a managed block.
@@ -122,6 +125,13 @@ struct LogoutArgs {
     /// Log out of every configured session and legacy profile.
     #[arg(long)]
     all: bool,
+}
+
+#[derive(Debug, Args)]
+struct SelectArgs {
+    /// Forget the default session.
+    #[arg(long)]
+    clear: bool,
 }
 
 #[derive(Debug, Args)]
@@ -228,6 +238,7 @@ impl Command {
                 profile: Some(_), ..
             }) => Some(("logout", "--profile <NAME>")),
             Command::Logout(LogoutArgs { all: true, .. }) => Some(("logout", "--all")),
+            Command::Select(SelectArgs { clear: true }) => Some(("select", "--clear")),
             _ => None,
         }
     }
@@ -239,6 +250,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
         Command::Setup(args) => setup::run(&ctx, args).await,
         Command::Login(args) => login::run(&ctx, args).await,
         Command::Logout(args) => logout::run(&ctx, args).await,
+        Command::Select(args) => select::run(&ctx, args).await,
         Command::Status(args) => status::run(&ctx, args).await,
         Command::Sync(args) => sync::run(&ctx, args).await,
         Command::List(args) => list::run(&ctx, args).await,
@@ -248,13 +260,14 @@ async fn dispatch(cli: Cli) -> Result<()> {
 
 fn init_tracing(verbose: u8) {
     let default = match verbose {
-        0 => "gac=warn",
-        1 => "gac=debug",
+        0 => "gac_redux=warn",
+        1 => "gac_redux=debug",
         _ => {
-            "gac=trace,aws_config=debug,aws_smithy_runtime=debug,aws_sdk_sso=debug,aws_sdk_ssooidc=debug"
+            "gac_redux=trace,aws_config=debug,aws_smithy_runtime=debug,aws_sdk_sso=debug,aws_sdk_ssooidc=debug"
         }
     };
-    let filter = EnvFilter::try_from_env("GAC_LOG").unwrap_or_else(|_| EnvFilter::new(default));
+    let filter =
+        EnvFilter::try_from_env("GAC_REDUX_LOG").unwrap_or_else(|_| EnvFilter::new(default));
     let ansi = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)

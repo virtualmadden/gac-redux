@@ -16,17 +16,20 @@ awsx() { HOME="$SMOKE" USERPROFILE="$SMOKE" aws "$@"; }
    prints `Added [sso-session smoke]`.
 2. **PKCE.** `gac login` opens the browser; approve. Expect ``Logged in to session `smoke` `` and
    `gac status` showing the token `valid until ...`, `refreshable`.
-3. **Device code.** `gac login --device-code`; open the printed link, check the code matches,
+3. **Select.** `gac select` lists `smoke` with its portal host, region and `logged in, ... left`;
+   press Enter. Expect ``The default session is now `smoke`.`` and `gac status` showing
+   `session smoke (default)`.
+4. **Device code.** `gac login --device-code`; open the printed link, check the code matches,
    approve. Expect the same success line.
-4. **List.** `gac list` prints your accounts and roles.
-5. **Sync.** `gac sync --dry-run` prints a diff adding profiles to the `# BEGIN gac sync session=smoke`
+5. **List.** `gac list` prints your accounts and roles.
+6. **Sync.** `gac sync --dry-run` prints a diff adding profiles to the `# BEGIN gac-redux sync session=smoke`
    block that setup created;
    `gac sync` reports `Synced N profiles`. Run `gac sync` again: `Already up to date`.
-6. **AWS call.** Pick a synced profile from `grep '^\[profile' "$SMOKE/.aws/config"`, then
+7. **AWS call.** Pick a synced profile from `grep '^\[profile' "$SMOKE/.aws/config"`, then
    `awsx sts get-caller-identity --profile '<account>/<role>'` returns your assumed-role ARN.
-7. **Doctor.** `gac doctor` reports no `FAIL`.
-8. **Logout.** `gac logout` prints ``Logged out of session `smoke`. ``; `gac status` shows
+8. **Doctor.** `gac doctor` reports no `FAIL`.
+9. **Logout.** `gac logout` prints ``Logged out of session `smoke`. ``; `gac status` shows
    `not logged in`, `gac list --refresh` exits with code 3, and the `awsx sts get-caller-identity`
-   call from step 6 now fails: the role credentials the AWS CLI cached are gone too.
+   call from step 7 now fails: the role credentials the AWS CLI cached are gone too.
 
 Clean up with `rm -rf "$SMOKE"`.

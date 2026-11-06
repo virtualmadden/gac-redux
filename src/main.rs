@@ -11,7 +11,7 @@ fn main() -> ExitCode {
                 .build(),
         )
     }));
-    match gac::run(std::env::args_os()) {
+    match gac_redux::run(std::env::args_os()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             let code = err.exit_code();
@@ -23,7 +23,7 @@ fn main() -> ExitCode {
 
 /// Renders a library error with its `help:` hint.
 #[derive(Debug)]
-struct Diagnostic(gac::Error);
+struct Diagnostic(gac_redux::Error);
 
 impl fmt::Display for Diagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

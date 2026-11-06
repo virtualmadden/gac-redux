@@ -7,7 +7,7 @@
 //! - `aws sso logout` sweeps gac's token, and `gac logout` sweeps the CLI's cached role
 //!   credentials.
 //!
-//! The AWS CLI tests skip when `aws` is not installed, unless `GAC_REQUIRE_AWS_CLI` is set (CI).
+//! The AWS CLI tests skip when `aws` is not installed, unless `GAC_REDUX_REQUIRE_AWS_CLI` is set (CI).
 
 mod support;
 
@@ -319,12 +319,12 @@ fn sdk_probe(sandbox: &Sandbox, profile: &str) -> Result<String, String> {
         "--test-threads=1",
     ]);
     sandbox.confine(&mut cmd);
-    cmd.env("GAC_SDK_PROBE_PROFILE", profile);
+    cmd.env("GAC_REDUX_SDK_PROBE_PROFILE", profile);
     let output = cmd.output().unwrap();
     let out = stdout(&output);
     // libtest prints the marker on the line that names the test.
     if let Some(key) = out
-        .split("GAC_SDK_PROBE_OK ")
+        .split("GAC_REDUX_SDK_PROBE_OK ")
         .nth(1)
         .and_then(|rest| rest.split_whitespace().next())
     {
@@ -342,7 +342,7 @@ fn sdk_probe_child() {
     use aws_config::BehaviorVersion;
     use aws_credential_types::provider::ProvideCredentials;
 
-    let Ok(profile) = std::env::var("GAC_SDK_PROBE_PROFILE") else {
+    let Ok(profile) = std::env::var("GAC_REDUX_SDK_PROBE_PROFILE") else {
         return; // Only meaningful when run by `sdk_probe`.
     };
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -358,8 +358,8 @@ fn sdk_probe_child() {
             .credentials_provider()
             .expect("a credentials provider");
         match provider.provide_credentials().await {
-            Ok(creds) => println!("GAC_SDK_PROBE_OK {}", creds.access_key_id()),
-            Err(err) => println!("GAC_SDK_PROBE_ERR {err:?}"),
+            Ok(creds) => println!("GAC_REDUX_SDK_PROBE_OK {}", creds.access_key_id()),
+            Err(err) => println!("GAC_REDUX_SDK_PROBE_ERR {err:?}"),
         }
     });
 }

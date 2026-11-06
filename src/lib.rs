@@ -1,4 +1,4 @@
-//! gac: short-lived AWS credentials through IAM Identity Center.
+//! gac-redux: short-lived AWS credentials through IAM Identity Center.
 //!
 //! The library exists to serve the `gac` binary; its API stays private until 1.0.
 //!

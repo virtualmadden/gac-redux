@@ -234,8 +234,9 @@ sso_region = us-east-1
         assert!(err.to_string().contains("no sso_start_url"), "{err}");
         let err = files.sso_session(&"missing".parse().unwrap()).unwrap_err();
         assert_eq!(err.hint().unwrap(), "run `gac setup --session missing`");
-        let orphaned =
-            format!("{CONFIG}\n# BEGIN gac sync session=missing\n# END gac sync session=missing\n");
+        let orphaned = format!(
+            "{CONFIG}\n# BEGIN gac-redux sync session=missing\n# END gac-redux sync session=missing\n"
+        );
         let files = AwsFiles::parse(orphaned, "").await.unwrap();
         let err = files.sso_session(&"missing".parse().unwrap()).unwrap_err();
         assert_eq!(

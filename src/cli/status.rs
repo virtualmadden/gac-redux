@@ -27,6 +27,8 @@ struct Status {
 struct SessionStatus {
     name: String,
     kind: &'static str,
+    /// Whether this is the default session `gac select` saved.
+    selected: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     start_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -76,13 +78,17 @@ pub async fn run(ctx: &Context, args: StatusArgs) -> Result<()> {
     let mut sessions: Vec<SessionStatus> = files
         .session_names()
         .into_iter()
-        .map(|name| named_status(&files, &store, &blocks, name, now))
+        .map(|name| {
+            let selected = ctx.selected().is_some_and(|s| s.as_str() == name);
+            named_status(&files, &store, &blocks, name, selected, now)
+        })
         .collect();
     sessions.extend(files.legacy_sso_profiles().into_iter().map(|legacy| {
         let session = Session::from(legacy.clone());
         SessionStatus {
             name: legacy.profile,
             kind: "legacy-profile",
+            selected: false,
             start_url: Some(legacy.start_url.to_string()),
             region: Some(legacy.region.to_string()),
             error: None,
@@ -111,6 +117,7 @@ fn named_status(
     store: &impl TokenStore,
     blocks: &[Block],
     name: &str,
+    selected: bool,
     now: Timestamp,
 ) -> SessionStatus {
     let sync_block = blocks
@@ -123,6 +130,7 @@ fn named_status(
             SessionStatus {
                 name: name.to_owned(),
                 kind: "sso-session",
+                selected,
                 start_url: Some(session.start_url.to_string()),
                 region: Some(session.region.to_string()),
                 error: None,
@@ -133,6 +141,7 @@ fn named_status(
         Err(err) => SessionStatus {
             name: name.to_owned(),
             kind: "sso-session",
+            selected,
             start_url: None,
             region: None,
             error: Some(err.to_string()),
@@ -206,7 +215,8 @@ fn render(status: &Status, now: Timestamp) -> String {
         } else {
             "legacy profile"
         };
-        let _ = writeln!(out, "{kind} {}", s.name);
+        let default = if s.selected { " (default)" } else { "" };
+        let _ = writeln!(out, "{kind} {}{default}", s.name);
         if let Some(error) = &s.error {
             let _ = writeln!(out, "  error         {error}");
             continue;
@@ -224,12 +234,32 @@ fn render(status: &Status, now: Timestamp) -> String {
         if s.kind == "sso-session" {
             let block = s.sync_block.as_ref().map_or_else(
                 || "none (run `gac sync`)".to_owned(),
-                |b| format!("{} profiles, name={}", b.profiles, b.name),
+                |b| {
+                    let plural = if b.profiles == 1 { "" } else { "s" };
+                    format!("{} profile{plural}, name={}", b.profiles, b.name)
+                },
             );
             let _ = writeln!(out, "  sync block    {block}");
         }
     }
     out
+}
+
+/// The token state in a few words, for one line of the `gac select` picker.
+pub(super) fn token_summary(store: &impl TokenStore, session: &Session, now: Timestamp) -> String {
+    let token = token_status(store, session, now);
+    let left = token
+        .expires_at
+        .as_deref()
+        .and_then(timestamp::parse)
+        .map(|at| human(at.duration_since(now)));
+    match (token.state, left) {
+        ("valid" | "refresh-due", Some(left)) => format!("logged in, {left} left"),
+        ("expired", _) if token.refreshable => "expired, refreshable".to_owned(),
+        ("expired", _) => "expired".to_owned(),
+        ("unreadable", _) => "unreadable token".to_owned(),
+        _ => "not logged in".to_owned(),
+    }
 }
 
 fn describe_token(token: &TokenStatus, now: Timestamp) -> String {

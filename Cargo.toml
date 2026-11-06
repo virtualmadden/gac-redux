@@ -1,5 +1,5 @@
 [package]
-name = "gac" # placeholder until the project is renamed before the first publish
+name = "gac-redux"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.94.1" # MSRV of the AWS SDK crates; std File::lock needs 1.89

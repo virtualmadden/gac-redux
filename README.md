@@ -1,11 +1,11 @@
-# gimme-aws-creds
+# gac-redux
 
 Short-lived AWS credentials through IAM Identity Center, as a single Rust binary that stays
 byte-compatible with the AWS CLI and SDKs. AWS only.
 
-> **Status: pre-release.** The binary and crate are called `gac`, a placeholder: the project
-> will be renamed before its first publish. The native path described below works today;
-> on-demand credentials (`env`, `exec`, `credential-process`, `console`) come next.
+> **Status: pre-release.** The package is `gac-redux`; the command it installs is `gac`. The
+> native path described below works today; on-demand credentials (`env`, `exec`,
+> `credential-process`, `console`) come next.
 
 ## How it works
 
@@ -21,13 +21,13 @@ byte-compatible with the AWS CLI and SDKs. AWS only.
    role credentials itself; no role keys are written anywhere.
 
 ```ini
-# BEGIN gac sync session=corp mode=sso name={account}/{role}
-# Managed by gac: edits inside this block are replaced on the next sync.
+# BEGIN gac-redux sync session=corp mode=sso name={account}/{role}
+# Managed by gac-redux: edits inside this block are replaced on the next sync.
 [profile payments-prod/ReadOnly]
 sso_session = corp
 sso_account_id = 111122223333
 sso_role_name = ReadOnly
-# END gac sync session=corp
+# END gac-redux sync session=corp
 ```
 
 `gac` never edits a line outside its own blocks, and it skips any profile name that already has a
@@ -49,18 +49,23 @@ $ aws s3 ls --profile payments-prod/ReadOnly
 |---|---|
 | `gac setup` | Creates an `[sso-session]` in the session's managed block, or reuses one `aws configure sso` already wrote |
 | `gac login` | Signs in and writes the shared token cache. `--device-code`, `--pkce`, `--no-browser`, `--port N`, `-p PROFILE` |
+| `gac select` | Picks the default session from a list showing each portal, region and token state. `--session NAME` sets it without the list, `--clear` forgets it |
 | `gac logout` | Revokes the session (`sso:Logout`), deletes its token and, as `aws sso logout` does, every role credential the AWS CLI cached from SSO tokens. `--all` |
 | `gac status` | Sessions, token and registration expiry, sync blocks. No secrets. `--json` |
 | `gac sync` | Writes and prunes the managed block. `--name TEMPLATE`, `--include`/`--exclude GLOB`, `--region`, `--reset`, `--refresh`, `--dry-run` |
 | `gac list` | Accounts and roles, from a one-hour inventory cache. `--json`, `--refresh` |
 | `gac doctor` | Read-only checks of the AWS files and caches, each with a suggested fix. `--json` |
 
-`--session NAME` (or `GAC_SESSION`) picks the session when more than one is configured. Data goes
-to stdout; prompts, links and progress go to stderr. Exit codes: `0` ok, `1` error, `2` usage,
+With more than one session configured, a command uses `--session NAME`, else the session of
+`--profile`, else `GAC_REDUX_SESSION`, else the default saved by `gac select`. Data goes to stdout; prompts, links and progress go to stderr. Exit codes: `0` ok, `1` error, `2` usage,
 `3` login required, `130` interrupted. `-v`/`-vv` log to stderr and never print a secret.
 
 `gac` honors `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_ENDPOINT_URL_SSO`,
-`AWS_ENDPOINT_URL_SSO_OIDC` and `NO_COLOR`. Its own state lives in `~/.aws/gac/` (mode 0700).
+`AWS_ENDPOINT_URL_SSO_OIDC` and `NO_COLOR`. Its own state lives in `~/.aws/gac-redux/` (mode 0700).
+
+Upgrading from the `gac` pre-release: `~/.aws/gac/` is moved to `~/.aws/gac-redux/` on the first
+run, and blocks with `# BEGIN gac sync` markers keep working and get the new markers on the next
+`gac sync`. Rename `GAC_SESSION` and `GAC_LOG` to `GAC_REDUX_SESSION` and `GAC_REDUX_LOG`.
 
 ## Development
 
@@ -71,7 +76,7 @@ $ cargo clippy --all-targets -- -D warnings
 
 The tests run every command against a mock Identity Center (`tests/support/mock_idc.rs`) in a
 throwaway HOME, so they never touch your `~/.aws` or call AWS. `tests/interop.rs` also checks
-interop with the real AWS CLI v2 (it must be on `PATH`; set `GAC_REQUIRE_AWS_CLI=1` to fail
+interop with the real AWS CLI v2 (it must be on `PATH`; set `GAC_REDUX_REQUIRE_AWS_CLI=1` to fail
 instead of skipping when it is missing) and with the Rust SDK's `aws-config`.
 
 Requires Rust 1.94.1 or newer.

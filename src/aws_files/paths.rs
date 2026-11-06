@@ -5,8 +5,11 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 
-/// The name of gac's own state directory under `~/.aws`. It follows the project's final name.
-pub const STATE_DIR_NAME: &str = "gac";
+/// The name of gac's own state directory under `~/.aws`.
+pub const STATE_DIR_NAME: &str = "gac-redux";
+
+/// The state directory's name before the project was renamed.
+const LEGACY_STATE_DIR_NAME: &str = "gac";
 
 #[derive(Debug, Clone)]
 pub struct AwsPaths {
@@ -62,9 +65,28 @@ impl AwsPaths {
         self.home.join(".aws").join("cli").join("cache")
     }
 
-    /// `~/.aws/gac`, gac's own state (0700).
+    /// `~/.aws/gac-redux`, gac's own state (0700).
     pub fn state_dir(&self) -> PathBuf {
         self.home.join(".aws").join(STATE_DIR_NAME)
+    }
+
+    /// Moves the state directory from its name before the rename, `~/.aws/gac`, unless the
+    /// current one already exists. Its contents are caches and a lock, so a failure only costs a
+    /// refetch and is not an error.
+    pub fn migrate_legacy_state_dir(&self) {
+        let legacy = self.home.join(".aws").join(LEGACY_STATE_DIR_NAME);
+        let current = self.state_dir();
+        if !legacy.is_dir() || current.exists() {
+            return;
+        }
+        match std::fs::rename(&legacy, &current) {
+            Ok(()) => {
+                tracing::debug!(from = %legacy.display(), to = %current.display(), "moved the state directory");
+            }
+            Err(err) => {
+                tracing::debug!(from = %legacy.display(), %err, "could not move the old state directory");
+            }
+        }
     }
 }
 
@@ -121,7 +143,7 @@ mod tests {
         assert_eq!(p.config_file(), Path::new("/h/.aws/config"));
         assert_eq!(p.credentials_file(), Path::new("/h/.aws/credentials"));
         assert_eq!(p.sso_cache_dir(), Path::new("/h/.aws/sso/cache"));
-        assert_eq!(p.state_dir(), Path::new("/h/.aws/gac"));
+        assert_eq!(p.state_dir(), Path::new("/h/.aws/gac-redux"));
     }
 
     #[cfg(not(windows))]
@@ -142,6 +164,24 @@ mod tests {
     fn windows_prefers_userprofile_like_the_aws_cli() {
         let p = paths(&[("HOME", r"C:\msys\home"), ("USERPROFILE", r"C:\Users\me")]).unwrap();
         assert_eq!(p.home(), Path::new(r"C:\Users\me"));
+    }
+
+    #[test]
+    fn moves_the_legacy_state_dir_once() {
+        let home = tempfile::tempdir().unwrap();
+        let home_str = home.path().to_str().unwrap();
+        let p = paths(&[("HOME", home_str), ("USERPROFILE", home_str)]).unwrap();
+        let legacy = home.path().join(".aws/gac");
+        std::fs::create_dir_all(legacy.join("inventory")).unwrap();
+        p.migrate_legacy_state_dir();
+        assert!(!legacy.exists());
+        assert!(p.state_dir().join("inventory").is_dir());
+
+        // A legacy directory that reappears beside the current one is left alone.
+        std::fs::create_dir_all(&legacy).unwrap();
+        p.migrate_legacy_state_dir();
+        assert!(legacy.is_dir());
+        assert!(p.state_dir().join("inventory").is_dir());
     }
 
     #[test]
