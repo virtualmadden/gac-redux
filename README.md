@@ -80,7 +80,7 @@ $ aws s3 ls --profile payments-prod/ReadOnly
 |---|---|
 | `gac setup` | Creates an `[sso-session]` in the session's managed block, or reuses one `aws configure sso` already wrote |
 | `gac login` | Signs in and writes the shared token cache. `--device-code`, `--pkce`, `--no-browser`, `--port N`, `-p PROFILE` |
-| `gac select` | Picks the account and role of the `[default]` profile from a list of every session's accounts and roles. `ACCOUNT/ROLE` picks without the list, `--clear` takes them out again, `--adopt` takes over a `[default]` you wrote |
+| `gac select` | Picks the account and role of the `[default]` profile from a list of every session's accounts and roles. `ACCOUNT/ROLE` picks without the list, `--clear` takes them out again, `--adopt` takes over a `[default]` you wrote, `--print` prints the chosen role's profile name instead of writing anything |
 | `gac logout` | Revokes the session (`sso:Logout`), deletes its token and, as `aws sso logout` does, every role credential the AWS CLI cached from SSO tokens. `--all` |
 | `gac status` | Sessions, token and registration expiry, sync blocks. No secrets. `--json` |
 | `gac sync` | Writes and prunes the managed block. `--mode sso\|process`, `--name TEMPLATE`, `--include`/`--exclude GLOB`, `--region`, `--reset`, `--refresh`, `--dry-run` |
@@ -119,6 +119,10 @@ access to on the next run. `--name` sets the profile names (default `{account}/{
 and SDKs use it whenever no profile is named. `gac select payments-prod/ReadOnly` does the same
 without the list, and `gac select --clear` goes back to no default, so a command without
 `--profile` cannot land in the wrong account.
+
+For a choice that lasts only as long as one shell, `export AWS_PROFILE=$(gac select --print)`
+picks from the same list and prints the profile name (one `gac sync` wrote, if there is one)
+without touching `[default]`.
 
 ### Does it work with `aws sso login` and the AWS SDKs?
 

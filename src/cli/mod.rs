@@ -158,6 +158,10 @@ struct SelectArgs {
     /// Let gac manage a [default] section you wrote, without asking.
     #[arg(long)]
     adopt: bool,
+
+    /// Print the name of the chosen role's profile instead of writing [default].
+    #[arg(long, conflicts_with_all = ["clear", "adopt"])]
+    print: bool,
 }
 
 #[derive(Debug, Args)]

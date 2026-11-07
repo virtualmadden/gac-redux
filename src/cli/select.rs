@@ -16,6 +16,9 @@ use crate::ui;
 
 pub async fn run(ctx: &Context, args: SelectArgs) -> Result<()> {
     let files = ctx.files().await?;
+    if args.print {
+        return print(ctx, &files, &args).await;
+    }
     let text = files.config_text();
     let found = default_block::find(text).map_err(|err| broken(ctx, &err))?;
     if args.clear {
@@ -27,17 +30,7 @@ pub async fn run(ctx: &Context, args: SelectArgs) -> Result<()> {
         Found::Managed(section) | Found::HandWritten(section) => Some(section),
         Found::Absent => None,
     };
-    let chosen = if let Some(target) = &args.target {
-        target::find(&rows, target)?
-    } else {
-        if !ctx.can_prompt() {
-            return Err(
-                Error::usage("gac select needs an interactive terminal to show the list")
-                    .with_hint("pass ACCOUNT/ROLE, e.g. `gac select payments-prod/ReadOnly`"),
-            );
-        }
-        pick(&rows, current)?
-    };
+    let chosen = choose(ctx, &rows, &args, current, "Default profile:")?;
 
     if files.credentials_profile("default").is_some() {
         return Err(Error::config(
@@ -100,6 +93,45 @@ pub async fn run(ctx: &Context, args: SelectArgs) -> Result<()> {
     Ok(())
 }
 
+/// `--print`: the chosen role's profile name on stdout, for `export AWS_PROFILE=...`. Writes
+/// nothing.
+async fn print(ctx: &Context, files: &AwsFiles, args: &SelectArgs) -> Result<()> {
+    let rows = target::rows(ctx, files).await?;
+    let chosen = choose(ctx, &rows, args, None, "Profile:")?;
+    let Some(name) = target::profile_of(ctx, files, &chosen)? else {
+        return Err(Error::config(format!(
+            "no profile in the AWS config file signs in as {}",
+            chosen.label()
+        ))
+        .with_hint(format!(
+            "run `gac sync --session {}` to write one, or `gac exec {}` to use it directly",
+            chosen.session,
+            chosen.label()
+        )));
+    };
+    ui::output(format!("{name}\n")).map_err(|err| Error::io("could not write to stdout", err))
+}
+
+/// The row ACCOUNT/ROLE names, or else the one picked from the list.
+fn choose(
+    ctx: &Context,
+    rows: &[Row],
+    args: &SelectArgs,
+    current: Option<&Section>,
+    message: &str,
+) -> Result<Row> {
+    if let Some(target) = &args.target {
+        return target::find(rows, target);
+    }
+    if !ctx.can_prompt() {
+        return Err(
+            Error::usage("gac select needs an interactive terminal to show the list")
+                .with_hint("pass ACCOUNT/ROLE, e.g. `gac select payments-prod/ReadOnly`"),
+        );
+    }
+    pick(rows, current, message)
+}
+
 /// Takes the account and role out of the default block, leaving the rest of `[default]`.
 async fn clear(ctx: &Context, text: &str, found: Found) -> Result<()> {
     let Found::Managed(mut section) = found else {
@@ -158,7 +190,7 @@ fn adopt(ctx: &Context, args: &SelectArgs) -> Result<bool> {
 }
 
 /// Shows the rows as `gac list` does, starting on the first, and returns the one chosen.
-fn pick(rows: &[Row], current: Option<&Section>) -> Result<Row> {
+fn pick(rows: &[Row], current: Option<&Section>, message: &str) -> Result<Row> {
     let current =
         current.and_then(|s| Some((s.get(SESSION_KEY)?, s.get(ACCOUNT_KEY)?, s.get(ROLE_KEY)?)));
     let several_sessions = rows.iter().any(|row| row.session != rows[0].session);
@@ -185,7 +217,7 @@ fn pick(rows: &[Row], current: Option<&Section>) -> Result<Row> {
     let labels: Vec<String> = rows.iter().map(Row::label).collect();
     let answers: Vec<&str> = labels.iter().map(String::as_str).collect();
     let index = ui::prompt::select(
-        "Default profile:",
+        message,
         align(&cells),
         &answers,
         0,
