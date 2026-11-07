@@ -1983,11 +1983,12 @@ fn sync_switches_a_block_between_modes_with_a_clean_diff() {
         .args(["sync", "--mode", "process", "--dry-run"])
         .assert()
         .success();
+    // The header names the file by a path the platform may spell differently, e.g. 8.3 on Windows.
+    let diff = stdout(diff.get_output());
+    let body: Vec<&str> = diff.lines().skip(2).collect();
     insta::assert_snapshot!(
-        stdout(diff.get_output()).replace(&sandbox.config_path().display().to_string(), "config"),
+        body.join("\n"),
         @r"
-    --- config
-    +++ config
     @@ -3,15 +3,11 @@
      sso_region = us-west-2
      sso_registration_scopes = sso:account:access
