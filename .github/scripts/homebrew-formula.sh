@@ -44,10 +44,16 @@ $(asset x86_64-unknown-linux-gnu)
 
   def install
     bin.install "gac"
+    man1.install Dir["man/*.1"]
+    bash_completion.install "completions/gac.bash" => "gac"
+    zsh_completion.install "completions/_gac"
+    fish_completion.install "completions/gac.fish"
   end
 
   test do
     assert_match "gac-redux #{version}", shell_output("#{bin}/gac --version")
+    assert_path_exists man1/"gac.1"
+    assert_path_exists zsh_completion/"_gac"
   end
 end
 FORMULA
