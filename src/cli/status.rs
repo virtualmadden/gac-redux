@@ -53,14 +53,14 @@ struct DefaultProfile {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct TokenStatus {
+pub struct TokenStatus {
     /// `valid`, `refresh-due`, `expired`, `missing` or `unreadable`.
-    state: &'static str,
+    pub state: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    expires_at: Option<String>,
-    refreshable: bool,
+    pub expires_at: Option<String>,
+    pub refreshable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    registration_expires_at: Option<String>,
+    pub registration_expires_at: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -170,7 +170,8 @@ fn named_status(
     }
 }
 
-fn token_status(store: &impl TokenStore, session: &Session, now: Timestamp) -> TokenStatus {
+/// The cached token of `session` as it stands, without refreshing it.
+pub fn token_status(store: &impl TokenStore, session: &Session, now: Timestamp) -> TokenStatus {
     match store.load(session.cache_key()) {
         Ok(Some(token)) => TokenStatus {
             state: match token.state(now) {
@@ -273,7 +274,7 @@ fn render(status: &Status, now: Timestamp) -> String {
     out
 }
 
-fn describe_token(token: &TokenStatus, now: Timestamp) -> String {
+pub fn describe_token(token: &TokenStatus, now: Timestamp) -> String {
     let Some(expires_at) = &token.expires_at else {
         return match token.state {
             "unreadable" => "unreadable (log in again)".to_owned(),
@@ -297,7 +298,8 @@ fn describe_token(token: &TokenStatus, now: Timestamp) -> String {
     }
 }
 
-fn human(duration: SignedDuration) -> String {
+/// A duration as `5m`, `7h 12m` or `2d 2h`.
+pub fn human(duration: SignedDuration) -> String {
     let minutes = duration.as_secs().max(0) / 60;
     match (minutes / (60 * 24), minutes / 60 % 24, minutes % 60) {
         (0, 0, m) => format!("{m}m"),

@@ -17,6 +17,7 @@ Commands:
   status              Show sessions, token and registration expiry, and managed blocks. No secrets
   sync                Write a profile per account and role into a managed block
   list                List the accounts and roles you can use
+  whoami              Show the account and role AWS tools use now, and why. Reads only local files
   exec                Run a command with a role's credentials in its environment
   env                 Print a role's credentials as shell exports, e.g. `eval "$(gac env)"`
   credential-process  Print credentials as `credential_process` JSON, for process-mode profiles

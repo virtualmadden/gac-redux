@@ -85,6 +85,7 @@ $ aws s3 ls --profile payments-prod/ReadOnly
 | `gac status` | Sessions, token and registration expiry, sync blocks. No secrets. `--json` |
 | `gac sync` | Writes and prunes the managed block. `--mode sso\|process`, `--name TEMPLATE`, `--include`/`--exclude GLOB`, `--region`, `--reset`, `--refresh`, `--dry-run` |
 | `gac list` | Accounts and roles, from a one-hour inventory cache. `--json`, `--refresh` |
+| `gac whoami` | The account, role and region AWS tools use right now, which rule picked them (`--profile`, `AWS_PROFILE`, `[default]`), and how long the token and role credentials last. Reads only local files, so it suits a shell prompt. `-p PROFILE`, `--json` |
 | `gac exec -- CMD` | Runs a command with a role's keys in `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`, for tools that cannot use SSO profiles. The role is `ACCOUNT/ROLE`, else that of `--profile`, `AWS_PROFILE` or `[default]`. Exits with the command's code. `--region`, `--force` |
 | `gac credential-process` | Prints a role's credentials as `credential_process` JSON. The profiles `gac sync --mode process` writes run it. `--session`, `--account-id`, `--role-name` |
 | `gac env` | Prints the variables `gac exec` sets as shell commands: `eval "$(gac env)"`. `--format sh\|fish\|powershell\|json`, `--unset` prints the commands that clear them, `--region` |

@@ -35,6 +35,34 @@ pub struct RoleTarget {
     pub region: Option<Region>,
     /// How to name it to the user: `payments-prod/ReadOnly`, or `profile dev`.
     pub label: String,
+    /// The profile that named it; `None` for `ACCOUNT/ROLE`.
+    pub profile: Option<String>,
+    /// What picked it.
+    pub source: Source,
+}
+
+/// What picked the role, in the order [`resolve`] tries them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// `ACCOUNT/ROLE` on the command line.
+    Target,
+    /// `--profile`.
+    Flag,
+    /// `AWS_PROFILE` or `AWS_DEFAULT_PROFILE`.
+    Env(&'static str),
+    /// The `[default]` profile.
+    Default,
+}
+
+impl Source {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Target => "ACCOUNT/ROLE",
+            Self::Flag => "--profile",
+            Self::Env(var) => var,
+            Self::Default => "[default]",
+        }
+    }
 }
 
 impl RoleTarget {
@@ -68,6 +96,8 @@ pub async fn resolve(
             account: row.account.id,
             role: row.role,
             region: None,
+            profile: None,
+            source: Source::Target,
         });
     }
     if ctx.typed_session().is_some() {
@@ -76,11 +106,11 @@ pub async fn resolve(
                 .with_hint("pass ACCOUNT/ROLE as well, or --profile NAME without --session"),
         );
     }
-    let (name, from) = match profile {
-        Some(name) => (name.to_owned(), "--profile"),
+    let (name, source) = match profile {
+        Some(name) => (name.to_owned(), Source::Flag),
         None => match profile_from_env() {
-            Some((name, var)) => (name, var),
-            None => ("default".to_owned(), "default"),
+            Some((name, var)) => (name, Source::Env(var)),
+            None => ("default".to_owned(), Source::Default),
         },
     };
     // `gac select` needs a session, so without one the first step is `gac setup`.
@@ -90,13 +120,22 @@ pub async fn resolve(
         "run `gac select` to pick one, or pass --profile NAME or ACCOUNT/ROLE"
     };
     let Some(section) = files.config_profile(&name) else {
-        return Err(if from == "default" {
+        return Err(if source == Source::Default {
             Error::config("there is no [default] profile to take the account and role from")
                 .with_hint(pick_hint)
         } else {
-            Error::config(format!(
-                "no profile `{name}` in the AWS config file (from {from})"
-            ))
+            let err = Error::config(format!(
+                "no profile `{name}` in the AWS config file (from {})",
+                source.as_str()
+            ));
+            match source {
+                Source::Env(var) => err.with_hint(format!(
+                    "unset {var} to use [default], or pass --profile NAME"
+                )),
+                _ => err.with_hint(
+                    "run `gac sync` to write the profiles, or `gac list` to see the roles",
+                ),
+            }
         });
     };
     let label = if name == "default" {
@@ -115,6 +154,8 @@ pub async fn resolve(
             role,
             region,
             label,
+            profile: Some(name),
+            source,
         });
     }
     let session = context::session_of_profile(files, &name)?;
@@ -133,6 +174,8 @@ pub async fn resolve(
         role: role.parse()?,
         region,
         label,
+        profile: Some(name),
+        source,
     })
 }
 
