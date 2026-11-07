@@ -78,6 +78,22 @@ struct State {
     counters: BTreeMap<String, u64>,
     secrets: Vec<String>,
     serial: u64,
+    /// Access key ids of the role credentials issued, which may sign `AssumeRole`.
+    access_keys: HashSet<String>,
+    assumed: Vec<AssumeRoleCall>,
+}
+
+/// One `AssumeRole` request the mock's STS answered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssumeRoleCall {
+    pub role_arn: String,
+    /// The access key id that signed the request.
+    pub signed_by: String,
+    pub session_name: String,
+    pub external_id: Option<String>,
+    pub duration_seconds: Option<String>,
+    /// The access key id issued in return.
+    pub issued: String,
 }
 
 impl State {
@@ -129,6 +145,8 @@ impl MockIdc {
             counters: BTreeMap::new(),
             secrets: Vec::new(),
             serial: 0,
+            access_keys: HashSet::new(),
+            assumed: Vec::new(),
         }));
         let (tx, rx) = std::sync::mpsc::channel();
         let shared = Arc::clone(&state);
@@ -194,6 +212,11 @@ impl MockIdc {
         self.with(|s| s.accounts = accounts);
     }
 
+    /// Every `AssumeRole` call answered, in order.
+    pub fn assumed(&self) -> Vec<AssumeRoleCall> {
+        self.with(|s| s.assumed.clone())
+    }
+
     /// How often an event happened, e.g. `register`, `refresh`, `logout`, `accounts`.
     pub fn counter(&self, name: &str) -> u64 {
         self.with(|s| s.counters.get(name).copied().unwrap_or_default())
@@ -253,13 +276,19 @@ async fn handle(state: &Arc<Mutex<State>>, req: Request<Incoming>) -> Reply {
         .get("x-amz-sso_bearer_token")
         .and_then(|v| v.to_str().ok())
         .map(str::to_owned);
-    let body = req
+    let authorization = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    let raw = req
         .into_body()
         .collect()
         .await
         .map(http_body_util::Collected::to_bytes)
         .unwrap_or_default();
-    let body: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let body: Value = serde_json::from_slice(&raw).unwrap_or(Value::Null);
     let mut s = state.lock().unwrap();
 
     match (method, path.as_str()) {
@@ -268,6 +297,8 @@ async fn handle(state: &Arc<Mutex<State>>, req: Request<Incoming>) -> Reply {
         (Method::POST, "/token") => token(&mut s, &body),
         (Method::GET, "/authorize") => authorize(&mut s, &query),
         (Method::GET, "/federation") => federation(&mut s, &query),
+        // STS speaks the query protocol: a form body, an XML answer.
+        (Method::POST, "/") => sts(&mut s, &raw, &authorization),
         (method, portal_path) => {
             if let Some(limit) = s.rate_limit {
                 let (start, count) = s.window;
@@ -627,6 +658,79 @@ fn list_roles(s: &mut State, query: &HashMap<String, String>) -> Reply {
     )
 }
 
+/// STS `AssumeRole`, signed with role credentials the mock issued (the `SigV4` signature is not verified, only
+/// the access key it names).
+fn sts(s: &mut State, raw: &[u8], authorization: &str) -> Reply {
+    let form: HashMap<String, String> = url::form_urlencoded::parse(raw).into_owned().collect();
+    let xml = |status: StatusCode, body: String| {
+        Response::builder()
+            .status(status)
+            .header("content-type", "text/xml")
+            .body(Full::new(Bytes::from(body)))
+            .unwrap()
+    };
+    let sts_error = |status: StatusCode, code: &str| {
+        xml(
+            status,
+            format!(
+                "<ErrorResponse><Error><Type>Sender</Type><Code>{code}</Code><Message>{code}</Message></Error><RequestId>mock</RequestId></ErrorResponse>"
+            ),
+        )
+    };
+    if form.get("Action").map(String::as_str) != Some("AssumeRole") {
+        return sts_error(StatusCode::BAD_REQUEST, "InvalidAction");
+    }
+    s.count("assume_role");
+    let signed_by = authorization
+        .split("Credential=")
+        .nth(1)
+        .and_then(|rest| rest.split('/').next())
+        .unwrap_or_default()
+        .to_owned();
+    if !s.access_keys.contains(&signed_by) {
+        return sts_error(StatusCode::FORBIDDEN, "InvalidClientTokenId");
+    }
+    let role_arn = form.get("RoleArn").cloned().unwrap_or_default();
+    let Some(account) = role_arn
+        .strip_prefix("arn:aws:iam::")
+        .and_then(|rest| rest.split(':').next())
+        .filter(|account| account.len() == 12)
+        .map(str::to_owned)
+    else {
+        return sts_error(StatusCode::BAD_REQUEST, "ValidationError");
+    };
+    let role_name = role_arn.rsplit('/').next().unwrap_or_default().to_owned();
+    let session_name = form.get("RoleSessionName").cloned().unwrap_or_default();
+    s.serial += 1;
+    let issued = format!("ASIAMOCKSTS{:09}", s.serial);
+    s.access_keys.insert(issued.clone());
+    let secret_key = s.secret("SECRET-ACCESS-KEY");
+    let session_token = s.secret("SESSION-TOKEN");
+    let expiration = jiff::Timestamp::from_second(now_secs() + 3600)
+        .unwrap()
+        .strftime("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    s.assumed.push(AssumeRoleCall {
+        role_arn: role_arn.clone(),
+        signed_by,
+        session_name: session_name.clone(),
+        external_id: form.get("ExternalId").cloned(),
+        duration_seconds: form.get("DurationSeconds").cloned(),
+        issued: issued.clone(),
+    });
+    xml(
+        StatusCode::OK,
+        format!(
+            "<AssumeRoleResponse xmlns=\"https://sts.amazonaws.com/doc/2011-06-15/\"><AssumeRoleResult>\
+             <Credentials><AccessKeyId>{issued}</AccessKeyId><SecretAccessKey>{secret_key}</SecretAccessKey>\
+             <SessionToken>{session_token}</SessionToken><Expiration>{expiration}</Expiration></Credentials>\
+             <AssumedRoleUser><AssumedRoleId>AROAMOCK:{session_name}</AssumedRoleId>\
+             <Arn>arn:aws:sts::{account}:assumed-role/{role_name}/{session_name}</Arn></AssumedRoleUser>\
+             </AssumeRoleResult><ResponseMetadata><RequestId>mock</RequestId></ResponseMetadata></AssumeRoleResponse>"
+        ),
+    )
+}
+
 /// The AWS federation endpoint's `getSigninToken`: only for role credentials the mock issued.
 fn federation(s: &mut State, query: &HashMap<String, String>) -> Reply {
     s.count("signin_token");
@@ -666,6 +770,7 @@ fn role_credentials(s: &mut State, query: &HashMap<String, String>) -> Reply {
     let secret_key = s.secret("SECRET-ACCESS-KEY");
     let session_token = s.secret("SESSION-TOKEN");
     let expiration = (now_secs() + 3600) * 1000;
+    s.access_keys.insert(format!("ASIAMOCK{}", &id[..8]));
     reply(
         StatusCode::OK,
         &json!({"roleCredentials": {

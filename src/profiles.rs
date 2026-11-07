@@ -1,6 +1,7 @@
 //! What `sync` writes: profile names from a template, the account and role selection, the
 //! settings stored in the block's BEGIN line, and the rendered profiles: native `sso-session`
-//! profiles, or `credential_process` profiles that run `gac credential-process`.
+//! profiles, or `credential_process` profiles that run `gac credential-process`, and chained
+//! `role_arn` profiles on top of them.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -8,6 +9,7 @@ use std::str::FromStr;
 
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
+use crate::auth::assume::RoleArn;
 use crate::aws_files::SsoSessionConfig;
 use crate::aws_files::managed_block::{self, Header};
 use crate::domain::{
@@ -172,6 +174,57 @@ fn glob_set(patterns: &[String]) -> Result<Option<GlobSet>> {
         .map_err(|err| Error::usage(format!("invalid globs: {err}")))
 }
 
+/// A chained-profile setting: from every synced profile matching the glob `source`, assume
+/// `role_arn`, in which `{account_id}` is the source profile's account.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Chain {
+    pub source: String,
+    pub role_arn: String,
+}
+
+impl Chain {
+    /// The role ARN for a source profile in `account`.
+    fn role_arn(&self, account: &AccountId) -> Result<RoleArn> {
+        self.role_arn
+            .replace("{account_id}", account.as_str())
+            .parse()
+    }
+}
+
+impl fmt::Display for Chain {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}={}", self.source, self.role_arn)
+    }
+}
+
+impl FromStr for Chain {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        let invalid = |why: &str| {
+            Error::usage(format!("invalid --chain `{s}`: {why}")).with_hint(
+                "use SOURCE=ROLE_ARN, e.g. '*/Admin=arn:aws:iam::{account_id}:role/Deploy'",
+            )
+        };
+        let (source, role_arn) = s
+            .split_once('=')
+            .ok_or_else(|| invalid("there is no `=` between the source and the role ARN"))?;
+        if source.is_empty() {
+            return Err(invalid("the source glob is empty"));
+        }
+        glob_set(&[source.to_owned()])?;
+        let chain = Self {
+            source: source.to_owned(),
+            role_arn: role_arn.to_owned(),
+        };
+        let sample: AccountId = "111122223333".parse().expect("a valid account id");
+        chain
+            .role_arn(&sample)
+            .map_err(|_| invalid("the part after `=` is not an IAM role ARN"))?;
+        Ok(chain)
+    }
+}
+
 /// The output mode of a sync block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum Mode {
@@ -225,6 +278,7 @@ pub struct SyncSettings {
     pub region: Option<Region>,
     pub include: Vec<String>,
     pub exclude: Vec<String>,
+    pub chain: Vec<Chain>,
 }
 
 impl SyncSettings {
@@ -256,6 +310,11 @@ impl SyncSettings {
                 .map_err(|_| unreadable("region"))?,
             include: header.get_all("include").map(str::to_owned).collect(),
             exclude: header.get_all("exclude").map(str::to_owned).collect(),
+            chain: header
+                .get_all("chain")
+                .map(str::parse)
+                .collect::<Result<_>>()
+                .map_err(|_| unreadable("chain"))?,
         })
     }
 
@@ -277,6 +336,11 @@ impl SyncSettings {
                 .iter()
                 .map(|g| ("exclude".to_owned(), g.clone())),
         );
+        settings.extend(
+            self.chain
+                .iter()
+                .map(|c| ("chain".to_owned(), c.to_string())),
+        );
         Header {
             session: session.to_string(),
             settings,
@@ -288,11 +352,21 @@ impl SyncSettings {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlannedProfile {
     pub name: ProfileName,
+    /// The account and role it signs in as: the assumed role's, for a chained profile.
     pub account: Account,
     pub role: RoleName,
+    pub chained: Option<Chained>,
 }
 
-/// Every selected account and role, named and sorted by account name, account id and role.
+/// How a chained profile gets its role: assumed from a synced profile's credentials.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Chained {
+    pub source: ProfileName,
+    pub role_arn: RoleArn,
+}
+
+/// Every selected account and role, named and sorted by account name, account id and role,
+/// then each chained profile, in the order of the chain settings.
 pub fn plan(
     accounts: &[Account],
     settings: &SyncSettings,
@@ -300,25 +374,63 @@ pub fn plan(
 ) -> Result<Vec<PlannedProfile>> {
     let selection = Selection::new(&settings.include, &settings.exclude)?;
     let mut planned = Vec::new();
-    let mut seen: BTreeMap<ProfileName, (String, String)> = BTreeMap::new();
+    // Each name and what it was given to, to report a collision.
+    let mut seen: BTreeMap<ProfileName, String> = BTreeMap::new();
+    let mut claim = |name: &ProfileName, what: String| match seen.insert(name.clone(), what.clone())
+    {
+        Some(other) => Err(Error::usage(format!(
+            "the template `{}` gives `{name}` to both {other} and {what}",
+            settings.name
+        ))
+        .with_hint(
+            "make names unique, e.g. --name '{account}-{account_id}/{role}', or narrow --chain",
+        )),
+        None => Ok(()),
+    };
     for account in accounts {
         for role in &account.roles {
             let name = settings.name.render(account, role, session)?;
             if !selection.matches(account, role, &name) {
                 continue;
             }
-            let this = (account.id.to_string(), role.to_string());
-            if let Some((other_account, other_role)) = seen.insert(name.clone(), this) {
-                return Err(Error::usage(format!(
-                    "the template `{}` gives `{name}` to both {other_account}/{other_role} and {}/{role}",
-                    settings.name, account.id
-                ))
-                .with_hint("make names unique, e.g. --name '{account}-{account_id}/{role}'"));
-            }
+            claim(&name, format!("{}/{role}", account.id))?;
             planned.push(PlannedProfile {
                 name,
                 account: account.clone(),
                 role: role.clone(),
+                chained: None,
+            });
+        }
+    }
+    let synced = planned.clone();
+    for chain in &settings.chain {
+        let source = Selection::new(std::slice::from_ref(&chain.source), &[])?;
+        for from in synced
+            .iter()
+            .filter(|p| source.matches(&p.account, &p.role, &p.name))
+        {
+            let role_arn = chain.role_arn(&from.account.id)?;
+            // Named like any profile: by the account it lands in, known or not, and the role.
+            let account = accounts
+                .iter()
+                .find(|a| a.id == *role_arn.account())
+                .cloned()
+                .unwrap_or_else(|| Account {
+                    id: role_arn.account().clone(),
+                    name: role_arn.account().to_string(),
+                    email: None,
+                    roles: Vec::new(),
+                });
+            let name = settings.name.render(&account, role_arn.role(), session)?;
+            claim(&name, format!("{role_arn} chained from `{}`", from.name))?;
+            planned.push(PlannedProfile {
+                name,
+                account,
+                role: role_arn.role().clone(),
+                chained: Some(Chained {
+                    source: from.name.clone(),
+                    role_arn,
+                }),
             });
         }
     }
@@ -381,6 +493,14 @@ pub fn render_body(
             lines.push(String::new());
         }
         lines.push(format!("[profile {}]", profile.name));
+        if let Some(chained) = &profile.chained {
+            lines.push(format!("role_arn = {}", chained.role_arn));
+            lines.push(format!("source_profile = {}", chained.source));
+            if let Some(region) = region {
+                lines.push(format!("region = {region}"));
+            }
+            continue;
+        }
         match mode {
             Mode::Sso => {
                 lines.push(format!("sso_session = {session}"));
@@ -531,6 +651,68 @@ mod tests {
     }
 
     #[test]
+    fn chains_assume_a_role_from_each_matching_profile() {
+        let accounts = [
+            account("111122223333", "payments-prod", &["Admin", "ReadOnly"]),
+            account("444455556666", "shared", &["Admin"]),
+        ];
+        let settings = SyncSettings {
+            chain: vec![
+                "*/Admin=arn:aws:iam::{account_id}:role/Deploy"
+                    .parse()
+                    .unwrap(),
+                "payments-prod/ReadOnly=arn:aws:iam::999988887777:role/ops/Audit"
+                    .parse()
+                    .unwrap(),
+            ],
+            ..SyncSettings::default()
+        };
+        let planned = plan(&accounts, &settings, &session()).unwrap();
+        assert_eq!(
+            names(&planned),
+            [
+                "payments-prod/Admin",
+                "payments-prod/ReadOnly",
+                "shared/Admin",
+                "payments-prod/Deploy",
+                "shared/Deploy",
+                // An account the portal does not list is named by its id.
+                "999988887777/Audit",
+            ]
+        );
+        let deploy = planned[3].chained.as_ref().unwrap();
+        assert_eq!(deploy.source.as_str(), "payments-prod/Admin");
+        assert_eq!(
+            deploy.role_arn.as_str(),
+            "arn:aws:iam::111122223333:role/Deploy"
+        );
+        let body = render_body(&planned[3..4], &session(), Mode::Process, None).join("\n");
+        assert_eq!(
+            body,
+            "[profile payments-prod/Deploy]\nrole_arn = arn:aws:iam::111122223333:role/Deploy\nsource_profile = payments-prod/Admin"
+        );
+
+        // One target from two sources is one name twice.
+        let colliding = SyncSettings {
+            chain: vec!["*=arn:aws:iam::999988887777:role/Audit".parse().unwrap()],
+            ..SyncSettings::default()
+        };
+        let err = plan(&accounts, &colliding, &session())
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("gives `999988887777/Audit` to both"), "{err}");
+
+        for bad in [
+            "*/Admin",
+            "=arn:aws:iam::1:role/x",
+            "*/Admin=Deploy",
+            "[=arn:aws:iam::111122223333:role/x",
+        ] {
+            assert!(bad.parse::<Chain>().is_err(), "{bad}");
+        }
+    }
+
+    #[test]
     fn settings_round_trip_through_the_header() {
         let settings = SyncSettings {
             mode: Mode::Sso,
@@ -538,6 +720,11 @@ mod tests {
             region: Some("eu-west-1".parse().unwrap()),
             include: vec!["pay*".into(), "dev ops/*".into()],
             exclude: vec!["*/Admin*".into()],
+            chain: vec![
+                "*/Admin=arn:aws:iam::{account_id}:role/Deploy"
+                    .parse()
+                    .unwrap(),
+            ],
         };
         let header = settings.to_header(&session());
         assert_eq!(SyncSettings::from_header(&header).unwrap(), settings);

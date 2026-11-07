@@ -2037,6 +2037,212 @@ fn console_without_a_login_exits_3() {
     assert_eq!(sandbox.mock.counter("signin_token"), 0);
 }
 
+/// The environment `gac exec --profile PROFILE` gives a command.
+fn exec_env(sandbox: &Sandbox, profile: &str) -> std::collections::BTreeMap<String, String> {
+    let output = sandbox
+        .gac()
+        .args(["exec", "--profile", profile, "--"])
+        .args(print_env())
+        .assert()
+        .success();
+    parse_env(&stdout(output.get_output()))
+}
+
+#[test]
+fn sync_writes_chained_profiles_and_remembers_the_chains() {
+    let sandbox = Sandbox::with_session();
+    login_device(&sandbox);
+    sandbox
+        .gac()
+        .args([
+            "sync",
+            "--include",
+            "payments-prod/*",
+            "--chain",
+            "*/AdministratorAccess=arn:aws:iam::{account_id}:role/Deploy",
+            "--region",
+            "eu-west-1",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Synced 3 profiles"));
+    let config = sandbox.config();
+    assert!(
+        config.contains("chain=*/AdministratorAccess%3Darn:aws:iam::{account_id}:role/Deploy"),
+        "{config}"
+    );
+    assert!(
+        config.contains(
+            "[profile payments-prod/Deploy]\nrole_arn = arn:aws:iam::111122223333:role/Deploy\nsource_profile = payments-prod/AdministratorAccess\nregion = eu-west-1\n"
+        ),
+        "{config}"
+    );
+    // The chains are remembered; --reset forgets them.
+    sandbox
+        .gac()
+        .arg("sync")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Already up to date: 3 profiles"));
+    sandbox.gac().args(["sync", "--reset"]).assert().success();
+    assert!(!sandbox.config().contains("role_arn"));
+
+    // A chained profile is skipped with its source, and on its own when its name is taken.
+    sandbox.write_credentials(
+        "[payments-prod/AdministratorAccess]\naws_access_key_id = AKIAEXAMPLEEXAMPLE\naws_secret_access_key = FAKE-STATIC\n",
+    );
+    sandbox
+        .gac()
+        .args([
+            "sync",
+            "--chain",
+            "*/AdministratorAccess=arn:aws:iam::{account_id}:role/Deploy",
+            "--chain",
+            "sandbox/PowerUser=arn:aws:iam::{account_id}:role/Ops",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "skipped profile `payments-prod/Deploy`: its source_profile `payments-prod/AdministratorAccess` was skipped",
+        ));
+    let config = sandbox.config();
+    assert!(!config.contains("payments-prod/Deploy"), "{config}");
+    assert!(config.contains("[profile sandbox/Ops]\nrole_arn = arn:aws:iam::777788889999:role/Ops\nsource_profile = sandbox/PowerUser\n"), "{config}");
+    // Static keys under a chained profile's own name skip just that profile.
+    sandbox.write_credentials(
+        "[sandbox/Ops]\naws_access_key_id = AKIAEXAMPLEEXAMPLE\naws_secret_access_key = FAKE-STATIC\n",
+    );
+    sandbox
+        .gac()
+        .args([
+            "sync",
+            "--chain",
+            "sandbox/PowerUser=arn:aws:iam::{account_id}:role/Ops",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("skipped profile `sandbox/Ops`"))
+        .stderr(predicate::str::contains("would hide its keys"));
+    assert!(!sandbox.config().contains("[profile sandbox/Ops]"));
+    sandbox
+        .gac()
+        .args([
+            "sync",
+            "--chain",
+            "*/PowerUser=arn:aws:iam::{account_id}:role/ReadOnly",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("gives `sandbox/ReadOnly` to both"));
+    sandbox
+        .gac()
+        .args(["sync", "--chain", "*/PowerUser"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("invalid --chain"));
+}
+
+#[test]
+fn exec_follows_a_role_chain_and_caches_each_role() {
+    let sandbox = Sandbox::with_session();
+    sandbox.write_config(&format!(
+        "{SESSION}\n\
+         [profile admin]\nsso_session = corp\nsso_account_id = 111122223333\nsso_role_name = AdministratorAccess\n\n\
+         [profile deploy]\nrole_arn = arn:aws:iam::111122223333:role/Deploy\nsource_profile = admin\n\
+         role_session_name = ci\nexternal_id = ext-1\nduration_seconds = 1800\n\n\
+         [profile audit]\nrole_arn = arn:aws:iam::999988887777:role/Audit\nsource_profile = deploy\nregion = eu-west-1\n"
+    ));
+    login_device(&sandbox);
+
+    let env = exec_env(&sandbox, "deploy");
+    let assumed = sandbox.mock.assumed();
+    assert_eq!(assumed.len(), 1);
+    assert_eq!(assumed[0].role_arn, "arn:aws:iam::111122223333:role/Deploy");
+    assert_eq!(
+        assumed[0].signed_by, "ASIAMOCK11112222",
+        "signed with the SSO role's keys"
+    );
+    assert_eq!(assumed[0].session_name, "ci");
+    assert_eq!(assumed[0].external_id.as_deref(), Some("ext-1"));
+    assert_eq!(assumed[0].duration_seconds.as_deref(), Some("1800"));
+    assert_eq!(env["AWS_ACCESS_KEY_ID"], assumed[0].issued);
+
+    // Two links: the second role is assumed with the first one's keys, and both are cached.
+    let env = exec_env(&sandbox, "audit");
+    let assumed = sandbox.mock.assumed();
+    assert_eq!(assumed.len(), 2, "deploy came from the cache");
+    assert_eq!(assumed[1].role_arn, "arn:aws:iam::999988887777:role/Audit");
+    assert_eq!(assumed[1].signed_by, assumed[0].issued);
+    assert!(
+        assumed[1].session_name.starts_with("gac-redux-"),
+        "{:?}",
+        assumed[1]
+    );
+    assert_eq!(env["AWS_ACCESS_KEY_ID"], assumed[1].issued);
+    assert_eq!(env["AWS_REGION"], "eu-west-1");
+    exec_env(&sandbox, "audit");
+    assert_eq!(sandbox.mock.assumed().len(), 2);
+    assert_eq!(sandbox.mock.counter("credentials"), 1);
+
+    // whoami names the final role and where the chain starts, from the caches.
+    sandbox
+        .gac()
+        .args(["whoami", "-p", "audit"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("account      999988887777\n"))
+        .stdout(predicate::str::contains("role         Audit\n"))
+        .stdout(predicate::str::contains(
+            "assumed via  AdministratorAccess in 111122223333 (SSO), then arn:aws:iam::111122223333:role/Deploy\n",
+        ))
+        .stdout(predicate::str::contains("credentials  cached until "));
+
+    // The console signs in with the final role's keys.
+    sandbox
+        .gac()
+        .args(["console", "--print", "-p", "audit"])
+        .assert()
+        .success();
+    assert_eq!(sandbox.mock.counter("signin_token"), 1);
+}
+
+#[test]
+fn chains_gac_cannot_follow_say_why() {
+    let sandbox = Sandbox::with_session();
+    sandbox.write_config(&format!(
+        "{SESSION}\n\
+         [profile admin]\nsso_session = corp\nsso_account_id = 111122223333\nsso_role_name = AdministratorAccess\n\n\
+         [profile mfa]\nrole_arn = arn:aws:iam::111122223333:role/Deploy\nsource_profile = admin\nmfa_serial = arn:aws:iam::111122223333:mfa/me\n\n\
+         [profile ec2]\nrole_arn = arn:aws:iam::111122223333:role/Deploy\ncredential_source = Ec2InstanceMetadata\n\n\
+         [profile loop-a]\nrole_arn = arn:aws:iam::111122223333:role/A\nsource_profile = loop-b\n\n\
+         [profile loop-b]\nrole_arn = arn:aws:iam::111122223333:role/B\nsource_profile = loop-a\n\n\
+         [profile orphan]\nrole_arn = arn:aws:iam::111122223333:role/Deploy\nsource_profile = gone\n"
+    ));
+    for (profile, message) in [
+        (
+            "mfa",
+            "profile `mfa` uses mfa_serial (an MFA prompt), which gac does not follow",
+        ),
+        (
+            "ec2",
+            "profile `ec2` uses credential_source, which gac does not follow",
+        ),
+        ("loop-a", "is longer than 5 links"),
+        (
+            "orphan",
+            "no profile `gone` in the AWS config file, though a source_profile names it",
+        ),
+    ] {
+        sandbox
+            .gac()
+            .args(["exec", "--profile", profile, "--", "x"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains(message));
+    }
+    assert_eq!(sandbox.mock.counter("credentials"), 0);
+}
+
 /// `gac env` output with the mock's secrets and the expiry replaced by placeholders.
 fn redacted(sandbox: &Sandbox, text: &str) -> String {
     let mut text = text.to_owned();

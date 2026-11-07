@@ -5,7 +5,8 @@ use crate::cli::context::Context;
 use crate::cli::target;
 use crate::domain::Region;
 use crate::error::{Error, Result};
-use crate::federation::{self, Partition, SigninError};
+use crate::federation::{self, SigninError};
+use crate::partition::Partition;
 use crate::secret::ExposeSecret;
 use crate::ui;
 

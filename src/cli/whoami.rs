@@ -7,7 +7,7 @@ use jiff::Timestamp;
 use serde::Serialize;
 
 use crate::auth::botocore_json::timestamp;
-use crate::auth::role::{EXPIRY_WINDOW, RoleCache};
+use crate::auth::role::EXPIRY_WINDOW;
 use crate::cli::WhoamiArgs;
 use crate::cli::context::Context;
 use crate::cli::status::{self, TokenStatus};
@@ -28,6 +28,12 @@ struct Whoami {
     #[serde(skip_serializing_if = "Option::is_none")]
     account_name: Option<String>,
     role_name: String,
+    /// For a chained profile, the SSO role the chain starts from.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sso_role: Option<SsoRole>,
+    /// The role ARNs then assumed in turn, the last one being `accountId`/`roleName`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    chain: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     region: Option<String>,
     /// `AWS_REGION`, `AWS_DEFAULT_REGION` or `profile`.
@@ -40,6 +46,13 @@ struct Whoami {
     /// The role a surrounding `gac exec` runs as.
     #[serde(skip_serializing_if = "Option::is_none")]
     exec_role: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SsoRole {
+    account_id: String,
+    role_name: String,
 }
 
 /// The role credentials in the AWS CLI's cache.
@@ -70,7 +83,7 @@ fn describe(ctx: &Context, target: &RoleTarget, now: Timestamp) -> Whoami {
     let account_name = ctx.cached_accounts(&target.session).and_then(|accounts| {
         accounts
             .into_iter()
-            .find(|account| account.id == target.account)
+            .find(|account| account.id == *target.final_account())
             .map(|account| account.name)
     });
     let (region, region_source) = match env_var("AWS_REGION")
@@ -83,8 +96,7 @@ fn describe(ctx: &Context, target: &RoleTarget, now: Timestamp) -> Whoami {
             None => (None, None),
         },
     };
-    let key = RoleCache::key(&target.session, &target.account, &target.role);
-    let expiration = RoleCache::new(ctx.paths.cli_cache_dir()).expiration(&key);
+    let expiration = target.cached_expiration(ctx);
     let credentials = CredentialsStatus {
         state: match expiration {
             None => "missing",
@@ -101,9 +113,18 @@ fn describe(ctx: &Context, target: &RoleTarget, now: Timestamp) -> Whoami {
             .session
             .name()
             .map_or_else(|| target.session.label(), ToString::to_string),
-        account_id: target.account.to_string(),
+        account_id: target.final_account().to_string(),
         account_name,
-        role_name: target.role.to_string(),
+        role_name: target.final_role().to_string(),
+        sso_role: (!target.chain.is_empty()).then(|| SsoRole {
+            account_id: target.account.to_string(),
+            role_name: target.role.to_string(),
+        }),
+        chain: target
+            .chain
+            .iter()
+            .map(|step| step.role_arn.to_string())
+            .collect(),
         region,
         region_source,
         token: status::token_status(&ctx.token_store(), &target.session, now),
@@ -134,6 +155,13 @@ fn render(whoami: &Whoami, target: &RoleTarget, now: Timestamp) -> String {
         },
     );
     line("role", whoami.role_name.clone());
+    if let Some(sso) = &whoami.sso_role {
+        let mut via = format!("{} in {} (SSO)", sso.role_name, sso.account_id);
+        for arn in &whoami.chain[..whoami.chain.len() - 1] {
+            let _ = write!(via, ", then {arn}");
+        }
+        line("assumed via", via);
+    }
     line(
         "region",
         match (&whoami.region, whoami.region_source) {

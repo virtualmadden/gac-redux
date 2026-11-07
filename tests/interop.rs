@@ -3,7 +3,7 @@
 //!
 //! - The AWS CLI and aws-config read the token cache gac writes, and refresh it in place.
 //! - gac consumes caches written by `aws sso login`, with either flow.
-//! - Profiles written by `gac sync` resolve in both.
+//! - Profiles written by `gac sync` resolve in both, chained `role_arn` profiles too.
 //! - `aws sso logout` sweeps gac's token, and `gac logout` sweeps the CLI's cached role
 //!   credentials.
 //!
@@ -439,5 +439,91 @@ fn process_profiles_resolve_in_the_aws_cli_and_aws_config() {
         sandbox.mock.counter("credentials"),
         1,
         "the AWS CLI's call to gac answered from the role cache"
+    );
+}
+
+/// `deploy`, which assumes a role from `dev`. The AWS CLI needs a region to ask STS.
+const CHAINED_PROFILE: &str = "
+[profile deploy]
+role_arn = arn:aws:iam::111122223333:role/Deploy
+source_profile = dev
+region = us-west-2
+";
+
+#[test]
+fn chained_profiles_resolve_in_the_aws_cli_and_aws_config() {
+    for mode in ["sso", "process"] {
+        let sandbox = Sandbox::new();
+        sandbox.write_config(SESSION);
+        gac_login(&sandbox);
+        sandbox
+            .gac()
+            .args([
+                "sync",
+                "--mode",
+                mode,
+                "--region",
+                "us-west-2",
+                "--chain",
+                "*/AdministratorAccess=arn:aws:iam::{account_id}:role/Deploy",
+            ])
+            .assert()
+            .success();
+
+        let key = sdk_probe(&sandbox, "payments-prod/Deploy").unwrap();
+        let assumed = sandbox.mock.assumed();
+        assert_eq!(assumed.len(), 1, "{mode}");
+        assert_eq!(assumed[0].role_arn, "arn:aws:iam::111122223333:role/Deploy");
+        assert_eq!(assumed[0].signed_by, "ASIAMOCK11112222");
+        assert_eq!(key, assumed[0].issued, "{mode}");
+        let Some(creds) = aws_export(&sandbox, "payments-prod/Deploy") else {
+            continue;
+        };
+        let assumed = sandbox.mock.assumed();
+        assert_eq!(
+            assumed.len(),
+            2,
+            "aws-config does not share the CLI's cache"
+        );
+        assert_eq!(creds["AccessKeyId"], assumed[1].issued, "{mode}");
+        assert_eq!(assumed[1].signed_by, "ASIAMOCK11112222");
+    }
+}
+
+#[test]
+fn the_aws_cli_reuses_assumed_role_credentials_gac_cached() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config(&format!("{SESSION}{DEV_PROFILE}{CHAINED_PROFILE}"));
+    gac_login(&sandbox);
+    gac_exec_noop(&sandbox, "deploy");
+    let assumed = sandbox.mock.assumed();
+    assert_eq!(assumed.len(), 1);
+    let Some(creds) = aws_export(&sandbox, "deploy") else {
+        return;
+    };
+    assert_eq!(creds["AccessKeyId"], assumed[0].issued);
+    assert_eq!(
+        sandbox.mock.assumed().len(),
+        1,
+        "the AWS CLI found gac's entry in ~/.aws/cli/cache"
+    );
+}
+
+#[test]
+fn gac_reuses_assumed_role_credentials_the_aws_cli_cached() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config(&format!("{SESSION}{DEV_PROFILE}{CHAINED_PROFILE}"));
+    gac_login(&sandbox);
+    let Some(creds) = aws_export(&sandbox, "deploy") else {
+        return;
+    };
+    let assumed = sandbox.mock.assumed();
+    assert_eq!(assumed.len(), 1);
+    assert_eq!(creds["AccessKeyId"], assumed[0].issued);
+    gac_exec_noop(&sandbox, "deploy");
+    assert_eq!(
+        sandbox.mock.assumed().len(),
+        1,
+        "gac found the AWS CLI's entry in ~/.aws/cli/cache"
     );
 }
