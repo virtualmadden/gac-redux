@@ -82,7 +82,12 @@ pub async fn resolve(
             None => ("default".to_owned(), "default"),
         },
     };
-    let pick_hint = "run `gac select` to pick one, or pass --profile NAME or ACCOUNT/ROLE";
+    // `gac select` needs a session, so without one the first step is `gac setup`.
+    let pick_hint = if files.session_names().is_empty() {
+        "run `gac setup`, then `gac select` to pick an account and role"
+    } else {
+        "run `gac select` to pick one, or pass --profile NAME or ACCOUNT/ROLE"
+    };
     let Some(section) = files.config_profile(&name) else {
         return Err(if from == "default" {
             Error::config("there is no [default] profile to take the account and role from")
@@ -149,10 +154,7 @@ pub async fn rows(ctx: &Context, files: &AwsFiles) -> Result<Vec<Row>> {
             .collect::<Result<_>>()?,
     };
     if names.is_empty() {
-        return Err(
-            Error::config("no [sso-session] is configured in the AWS config file")
-                .with_hint("run `gac setup`"),
-        );
+        return Err(context::no_sessions());
     }
     let mut rows = Vec::new();
     let mut needs_login = None;
