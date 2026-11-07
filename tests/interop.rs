@@ -363,3 +363,51 @@ fn sdk_probe_child() {
         }
     });
 }
+
+/// `gac exec --profile PROFILE` with a command that does nothing.
+fn gac_exec_noop(sandbox: &Sandbox, profile: &str) {
+    let noop: &[&str] = if cfg!(windows) {
+        &["cmd", "/C", "exit 0"]
+    } else {
+        &["true"]
+    };
+    sandbox
+        .gac()
+        .args(["exec", "--profile", profile, "--"])
+        .args(noop)
+        .assert()
+        .success();
+}
+
+#[test]
+fn the_aws_cli_reuses_role_credentials_gac_cached() {
+    let sandbox = sandbox_with_dev();
+    gac_login(&sandbox);
+    gac_exec_noop(&sandbox, "dev");
+    assert_eq!(sandbox.mock.counter("credentials"), 1);
+    let Some(creds) = aws_export(&sandbox, "dev") else {
+        return;
+    };
+    assert_eq!(creds["AccessKeyId"], "ASIAMOCK11112222");
+    assert_eq!(
+        sandbox.mock.counter("credentials"),
+        1,
+        "the AWS CLI found gac's entry in ~/.aws/cli/cache"
+    );
+}
+
+#[test]
+fn gac_reuses_role_credentials_the_aws_cli_cached() {
+    let sandbox = sandbox_with_dev();
+    gac_login(&sandbox);
+    if aws_export(&sandbox, "dev").is_none() {
+        return;
+    }
+    assert_eq!(sandbox.mock.counter("credentials"), 1);
+    gac_exec_noop(&sandbox, "dev");
+    assert_eq!(
+        sandbox.mock.counter("credentials"),
+        1,
+        "gac found the AWS CLI's entry in ~/.aws/cli/cache"
+    );
+}

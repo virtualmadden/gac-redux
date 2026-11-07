@@ -6,6 +6,7 @@ mod device;
 pub mod oidc;
 mod pkce;
 pub mod registration;
+pub mod role;
 pub mod token;
 
 use std::io;

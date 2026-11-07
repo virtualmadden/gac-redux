@@ -116,6 +116,7 @@ fn man_writes_a_page_per_command() {
         [
             "gac-completions.1",
             "gac-doctor.1",
+            "gac-exec.1",
             "gac-list.1",
             "gac-login.1",
             "gac-logout.1",
@@ -1509,4 +1510,205 @@ fn verbose_output_never_contains_a_secret() {
         "-vv logs"
     );
     assert_no_secrets(&transcript, &sandbox.mock.secrets(), "-vv output");
+}
+
+/// A command that prints its environment as `NAME=value` lines.
+fn print_env() -> Vec<&'static str> {
+    if cfg!(windows) {
+        vec!["cmd", "/C", "set"]
+    } else {
+        vec!["env"]
+    }
+}
+
+/// A command that exits with `code`.
+fn exit_with(code: &str) -> Vec<String> {
+    if cfg!(windows) {
+        vec!["cmd".into(), "/C".into(), format!("exit {code}")]
+    } else {
+        vec!["sh".into(), "-c".into(), format!("exit {code}")]
+    }
+}
+
+fn parse_env(output: &str) -> std::collections::BTreeMap<String, String> {
+    output
+        .lines()
+        .filter_map(|line| line.split_once('='))
+        .map(|(name, value)| (name.to_uppercase(), value.to_owned()))
+        .collect()
+}
+
+/// The path botocore caches the credentials of a `corp` account and role at.
+fn role_cache_path(sandbox: &Sandbox, account: &str, role: &str) -> std::path::PathBuf {
+    use sha1::Digest;
+    let args = format!(r#"{{"accountId":"{account}","roleName":"{role}","sessionName":"corp"}}"#);
+    let key = hex::encode(sha1::Sha1::digest(args.as_bytes()));
+    sandbox
+        .home()
+        .join(".aws/cli/cache")
+        .join(format!("{key}.json"))
+}
+
+#[test]
+fn exec_runs_a_command_as_the_default_profiles_role_and_caches_the_credentials() {
+    let sandbox = Sandbox::with_session();
+    login_device(&sandbox);
+    sandbox
+        .gac()
+        .args(["select", "sandbox/PowerUser"])
+        .assert()
+        .success();
+
+    let mut args = vec!["exec", "--"];
+    args.extend(print_env());
+    let output = sandbox
+        .gac()
+        .args(&args)
+        .env("AWS_PROFILE", "default")
+        .env("AWS_ACCESS_KEY_ID", "AKIASTALE")
+        .assert()
+        .success();
+    let env = parse_env(&stdout(output.get_output()));
+    assert_eq!(env["AWS_ACCESS_KEY_ID"], "ASIAMOCK77778888");
+    let secrets = sandbox.mock.secrets();
+    assert!(secrets.contains(&env["AWS_SECRET_ACCESS_KEY"]));
+    assert!(secrets.contains(&env["AWS_SESSION_TOKEN"]));
+    assert!(env["AWS_CREDENTIAL_EXPIRATION"].ends_with('Z'));
+    assert_eq!(env["GAC_REDUX_EXEC"], "the [default] profile");
+    assert!(!env.contains_key("AWS_PROFILE"), "AWS_PROFILE is unset");
+    assert!(!env.contains_key("AWS_REGION"), "no region is known");
+    assert_eq!(sandbox.mock.counter("credentials"), 1);
+
+    // The entry is where the AWS CLI looks for it, private, and reused by the next run.
+    let cache = role_cache_path(&sandbox, "777788889999", "PowerUser");
+    let entry: Value = serde_json::from_slice(&std::fs::read(&cache).unwrap()).unwrap();
+    assert_eq!(entry["ProviderType"], "sso");
+    assert_eq!(entry["Credentials"]["AccessKeyId"], "ASIAMOCK77778888");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&cache).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+    sandbox.gac().args(&args).assert().success();
+    assert_eq!(
+        sandbox.mock.counter("credentials"),
+        1,
+        "the second run uses the cache"
+    );
+    assert_no_secrets(&stderr(output.get_output()), &secrets, "exec");
+}
+
+#[test]
+fn exec_takes_the_role_from_a_target_or_a_profile() {
+    let sandbox = Sandbox::with_session();
+    login_device(&sandbox);
+    sandbox.write_config(&format!(
+        "{SESSION}\n[profile dev]\nsso_session = corp\nsso_account_id = 111122223333\nsso_role_name = ReadOnly\nregion = eu-west-1\n"
+    ));
+    let env_of = |args: &[&str], extra: &[(&str, &str)]| {
+        let mut all = args.to_vec();
+        all.push("--");
+        all.extend(print_env());
+        let mut cmd = sandbox.gac();
+        cmd.args(&all);
+        for (name, value) in extra {
+            cmd.env(name, value);
+        }
+        let output = cmd.assert().success();
+        parse_env(&stdout(output.get_output()))
+    };
+
+    let env = env_of(&["exec", "shared-services/ReadOnly"], &[]);
+    assert_eq!(env["AWS_ACCESS_KEY_ID"], "ASIAMOCK44445555");
+    assert_eq!(env["GAC_REDUX_EXEC"], "Shared Services/ReadOnly");
+
+    let env = env_of(&["exec", "--profile", "dev"], &[]);
+    assert_eq!(env["AWS_ACCESS_KEY_ID"], "ASIAMOCK11112222");
+    assert_eq!(env["AWS_REGION"], "eu-west-1");
+    assert_eq!(env["AWS_DEFAULT_REGION"], "eu-west-1");
+
+    // AWS_PROFILE picks the profile, an inherited region beats the profile's, --region beats both.
+    let env = env_of(
+        &["exec"],
+        &[("AWS_PROFILE", "dev"), ("AWS_REGION", "us-east-2")],
+    );
+    assert_eq!(env["AWS_ACCESS_KEY_ID"], "ASIAMOCK11112222");
+    assert_eq!(env["AWS_REGION"], "us-east-2");
+    let env = env_of(
+        &["exec", "--profile", "dev", "--region", "ap-south-1"],
+        &[("AWS_REGION", "us-east-2")],
+    );
+    assert_eq!(env["AWS_REGION"], "ap-south-1");
+
+    // Without [default], a profile or a target there is nothing to pick.
+    let mut args = vec!["exec", "--"];
+    args.extend(print_env());
+    let output = sandbox.gac().args(&args).assert().code(1);
+    assert!(
+        stderr(output.get_output()).contains("there is no [default] profile"),
+        "{}",
+        stderr(output.get_output())
+    );
+    sandbox
+        .gac()
+        .args(["exec", "nope/ReadOnly", "--", "x"])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "no account and role match `nope/ReadOnly`",
+        ));
+}
+
+#[test]
+fn exec_passes_the_exit_code_through_and_refuses_to_nest() {
+    let sandbox = Sandbox::with_session();
+    login_device(&sandbox);
+    let mut args: Vec<String> = ["exec", "sandbox/ReadOnly", "--"]
+        .map(String::from)
+        .to_vec();
+    args.extend(exit_with("7"));
+    sandbox.gac().args(&args).assert().code(7);
+
+    sandbox
+        .gac()
+        .args(&args)
+        .env("GAC_REDUX_EXEC", "payments-prod/ReadOnly")
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains(
+            "already running inside `gac exec` as payments-prod/ReadOnly",
+        ));
+    sandbox
+        .gac()
+        .args(["exec", "--force", "sandbox/ReadOnly", "--"])
+        .args(exit_with("0"))
+        .env("GAC_REDUX_EXEC", "payments-prod/ReadOnly")
+        .assert()
+        .success();
+
+    sandbox
+        .gac()
+        .args(["exec", "sandbox/ReadOnly", "--", "gac-no-such-command"])
+        .assert()
+        .code(127)
+        .stderr(predicate::str::contains(
+            "could not run `gac-no-such-command`",
+        ));
+}
+
+#[test]
+fn exec_without_a_login_exits_3() {
+    let sandbox = Sandbox::with_session();
+    sandbox.write_config(&format!(
+        "{SESSION}\n[profile dev]\nsso_session = corp\nsso_account_id = 111122223333\nsso_role_name = ReadOnly\n"
+    ));
+    sandbox
+        .gac()
+        .args(["exec", "--profile", "dev", "--"])
+        .args(exit_with("0"))
+        .assert()
+        .code(3)
+        .stderr(predicate::str::contains("gac login --session corp"));
+    assert_eq!(sandbox.mock.counter("credentials"), 0);
 }

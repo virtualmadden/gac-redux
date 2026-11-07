@@ -2,6 +2,7 @@
 
 mod context;
 mod doctor;
+mod exec;
 mod generate;
 mod list;
 mod login;
@@ -10,6 +11,7 @@ mod select;
 mod setup;
 mod status;
 mod sync;
+mod target;
 
 use std::ffi::OsString;
 use std::io::IsTerminal;
@@ -80,6 +82,8 @@ enum Command {
     Sync(SyncArgs),
     /// List the accounts and roles you can use.
     List(ListArgs),
+    /// Run a command with a role's credentials in its environment.
+    Exec(ExecArgs),
     /// Check the AWS files and caches for problems; --fix applies the mechanical fixes.
     Doctor(DoctorArgs),
     /// Print a shell completion script, e.g. `source <(gac completions zsh)`.
@@ -199,6 +203,32 @@ struct ListArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    after_help = "The role is ACCOUNT/ROLE, else that of --profile, AWS_PROFILE or the [default] profile.\nThe command gets AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN,\nAWS_CREDENTIAL_EXPIRATION and, when known, AWS_REGION; AWS_PROFILE is unset.\nExits with the command's exit code."
+)]
+struct ExecArgs {
+    /// Use the account and role of this profile.
+    #[arg(short, long, value_name = "NAME", conflicts_with = "target")]
+    profile: Option<String>,
+
+    /// Set `AWS_REGION` and `AWS_DEFAULT_REGION` to this region.
+    #[arg(long, value_name = "REGION")]
+    region: Option<String>,
+
+    /// Run even inside another `gac exec`.
+    #[arg(long)]
+    force: bool,
+
+    /// The account and role, by account name or id, e.g. `payments-prod/ReadOnly`.
+    #[arg(value_name = "ACCOUNT/ROLE")]
+    target: Option<String>,
+
+    /// The command and its arguments, after `--`.
+    #[arg(last = true, required = true, value_name = "COMMAND")]
+    command: Vec<OsString>,
+}
+
+#[derive(Debug, Args)]
 struct DoctorArgs {
     /// Print JSON.
     #[arg(long)]
@@ -281,6 +311,9 @@ impl Command {
             }) => Some(("logout", "--profile <NAME>")),
             Command::Logout(LogoutArgs { all: true, .. }) => Some(("logout", "--all")),
             Command::Select(SelectArgs { clear: true, .. }) => Some(("select", "--clear")),
+            Command::Exec(ExecArgs {
+                profile: Some(_), ..
+            }) => Some(("exec", "--profile <NAME>")),
             _ => None,
         }
     }
@@ -296,6 +329,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
         Command::Status(args) => status::run(&ctx, args).await,
         Command::Sync(args) => sync::run(&ctx, args).await,
         Command::List(args) => list::run(&ctx, args).await,
+        Command::Exec(args) => exec::run(&ctx, args).await,
         Command::Doctor(args) => doctor::run(&ctx, args).await,
         Command::Completions(_) | Command::Man(_) => unreachable!("handled before the runtime"),
     }
