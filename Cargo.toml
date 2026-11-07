@@ -20,6 +20,8 @@ path = "src/main.rs"
 aws-config = { version = "1.13", default-features = false, features = ["default-https-client", "rt-tokio", "behavior-version-latest"] }
 aws-sdk-sso = { version = "1.117", default-features = false, features = ["default-https-client", "rt-tokio", "behavior-version-latest"] }
 aws-sdk-ssooidc = { version = "1.119", default-features = false, features = ["default-https-client", "rt-tokio", "behavior-version-latest"] }
+aws-sdk-sts = { version = "1.124", default-features = false, features = ["default-https-client", "rt-tokio", "behavior-version-latest"] }
+aws-credential-types = "1.3"
 aws-runtime = "1.10"
 aws-types = "1.7"
 base64 = "0.23"
@@ -58,7 +60,6 @@ ureq = { version = "3.5", default-features = false, features = ["rustls-no-provi
 [dev-dependencies]
 assert_cmd = "2.2"
 aws-config = { version = "1.13", default-features = false, features = ["default-https-client", "rt-tokio", "behavior-version-latest", "sso", "credentials-process"] }
-aws-credential-types = "1"
 insta = { version = "1.49", features = ["json", "filters"] }
 predicates = "3"
 proptest = "1"

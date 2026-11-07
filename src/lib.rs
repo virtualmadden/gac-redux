@@ -15,6 +15,7 @@ mod federation;
 mod fsx;
 mod inventory;
 mod oauth;
+mod partition;
 mod portal;
 mod profiles;
 mod sdk;

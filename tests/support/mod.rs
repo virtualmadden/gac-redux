@@ -133,6 +133,7 @@ impl Sandbox {
             .env("USERPROFILE", self.home())
             .env("AWS_ENDPOINT_URL_SSO", &self.mock.url)
             .env("AWS_ENDPOINT_URL_SSO_OIDC", &self.mock.url)
+            .env("AWS_ENDPOINT_URL_STS", &self.mock.url)
             .env(
                 "GAC_REDUX_FEDERATION_ENDPOINT",
                 format!("{}/federation", self.mock.url),

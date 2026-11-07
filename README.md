@@ -83,7 +83,7 @@ $ aws s3 ls --profile payments-prod/ReadOnly
 | `gac select` | Picks the account and role of the `[default]` profile from a list of every session's accounts and roles. `ACCOUNT/ROLE` picks without the list, `--clear` takes them out again, `--adopt` takes over a `[default]` you wrote, `--print` prints the chosen role's profile name instead of writing anything |
 | `gac logout` | Revokes the session (`sso:Logout`), deletes its token and, as `aws sso logout` does, every role credential the AWS CLI cached from SSO tokens. `--all` |
 | `gac status` | Sessions, token and registration expiry, sync blocks. No secrets. `--json` |
-| `gac sync` | Writes and prunes the managed block. `--mode sso\|process`, `--name TEMPLATE`, `--include`/`--exclude GLOB`, `--region`, `--reset`, `--refresh`, `--dry-run` |
+| `gac sync` | Writes and prunes the managed block. `--mode sso\|process`, `--name TEMPLATE`, `--include`/`--exclude GLOB`, `--chain SOURCE=ROLE_ARN`, `--region`, `--reset`, `--refresh`, `--dry-run` |
 | `gac list` | Accounts and roles, from a one-hour inventory cache. `--json`, `--refresh` |
 | `gac whoami` | The account, role and region AWS tools use right now, which rule picked them (`--profile`, `AWS_PROFILE`, `[default]`), and how long the token and role credentials last. Reads only local files, so it suits a shell prompt. `-p PROFILE`, `--json` |
 | `gac exec -- CMD` | Runs a command with a role's keys in `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`, for tools that cannot use SSO profiles. The role is `ACCOUNT/ROLE`, else that of `--profile`, `AWS_PROFILE` or `[default]`. Exits with the command's code. `--region`, `--force` |
@@ -132,10 +132,22 @@ Yes. `gac` writes the same token cache and the same native `sso-session` profile
 does, so `aws sso login`, `aws sso logout`, the AWS CLI and every SDK that supports Identity
 Center share one login, and you can stop using `gac` at any time without breaking a profile.
 
+### Can I assume another role from an SSO role?
+
+Yes. `gac sync --chain '*/Admin=arn:aws:iam::{account_id}:role/Deploy'` adds, for every synced
+profile matching the glob, a profile with `role_arn` and `source_profile` that the AWS CLI and
+SDKs follow themselves; `{account_id}` is the source profile's account, and the profile is named
+by the same template (`payments-prod/Deploy`). `gac exec`, `env`, `console` and `whoami` follow
+any `role_arn`/`source_profile` chain, with `role_session_name`, `external_id` and
+`duration_seconds`, and share the AWS CLI's cache of assumed-role credentials. Profiles with
+`mfa_serial` or `credential_source` are left to the AWS CLI.
+
 ### Does it write access keys to disk?
 
-No. The profiles name an account and role, and the SDKs fetch short-lived role credentials and
-refresh them themselves. `~/.aws/credentials` is never written.
+No long-lived ones. The profiles name an account and role, and the SDKs fetch short-lived role
+credentials and refresh them themselves. `gac exec`, `env` and `console` cache short-lived role
+credentials in `~/.aws/cli/cache`, as the AWS CLI does, and `~/.aws/credentials` is never
+written.
 
 ### Can I log in over SSH or on a machine without a browser?
 

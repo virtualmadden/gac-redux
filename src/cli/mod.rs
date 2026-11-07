@@ -210,6 +210,10 @@ struct SyncArgs {
     #[arg(long, value_name = "REGION")]
     region: Option<String>,
 
+    /// Also write a profile that assumes a role from each synced profile matching a glob, as `SOURCE=ROLE_ARN`; `{account_id}` is the source's account (repeatable)
+    #[arg(long, value_name = "SOURCE=ROLE_ARN")]
+    chain: Vec<String>,
+
     /// Forget the settings stored in the block and start from the defaults.
     #[arg(long)]
     reset: bool,

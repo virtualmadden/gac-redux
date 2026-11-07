@@ -1,6 +1,7 @@
 //! Identity Center authentication: logging in, keeping the shared token cache fresh, and
 //! logging out.
 
+pub mod assume;
 pub mod botocore_json;
 mod device;
 pub mod oidc;

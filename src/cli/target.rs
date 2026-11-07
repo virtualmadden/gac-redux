@@ -1,15 +1,23 @@
 //! Which account and role a command acts on: the rows `gac list` shows, an `ACCOUNT/ROLE` picked
-//! from them, or a profile's `sso_account_id` and `sso_role_name`.
+//! from them, or a profile's `sso_account_id` and `sso_role_name`, followed through any
+//! `role_arn`/`source_profile` chain.
+
+use jiff::Timestamp;
 
 use crate::auth::Session;
+use crate::auth::assume::{self, AssumeCache, AssumeRole};
 use crate::auth::role::{self, RoleCache, RoleCredentials};
 use crate::aws_files::AwsFiles;
 use crate::cli::context::{self, Context};
 use crate::domain::{AccountId, Region, RoleName, SessionName};
 use crate::error::{Error, Result};
+use crate::partition::Partition;
 use crate::portal::Account;
 use crate::profiles;
 use crate::ui;
+
+/// How many `source_profile` links a chain may have; more is almost surely a loop.
+const MAX_CHAIN: usize = 5;
 
 /// One account and role a session can use.
 #[derive(Debug, Clone)]
@@ -29,8 +37,11 @@ impl Row {
 #[derive(Debug, Clone)]
 pub struct RoleTarget {
     pub session: Session,
+    /// The SSO role the credentials start from.
     pub account: AccountId,
     pub role: RoleName,
+    /// The roles then assumed in turn, for a chained profile.
+    pub chain: Vec<AssumeRole>,
     /// The profile's `region`, if a profile named the role and set one.
     pub region: Option<Region>,
     /// How to name it to the user: `payments-prod/ReadOnly`, or `profile dev`.
@@ -66,26 +77,72 @@ impl Source {
 }
 
 impl RoleTarget {
-    /// Drops the role's cached credentials, so the next [`Self::credentials`] fetches new ones.
+    /// The account whose credentials a command ends up with: the last assumed role's, if any.
+    pub fn final_account(&self) -> &AccountId {
+        self.chain
+            .last()
+            .map_or(&self.account, |step| step.role_arn.account())
+    }
+
+    /// The role a command ends up with.
+    pub fn final_role(&self) -> &RoleName {
+        self.chain
+            .last()
+            .map_or(&self.role, |step| step.role_arn.role())
+    }
+
+    /// When the cached credentials of the final role expire, used or not.
+    pub fn cached_expiration(&self, ctx: &Context) -> Option<Timestamp> {
+        match self.chain.last() {
+            Some(step) => AssumeCache::new(ctx.paths.cli_cache_dir()).expiration(step),
+            None => RoleCache::new(ctx.paths.cli_cache_dir()).expiration(&RoleCache::key(
+                &self.session,
+                &self.account,
+                &self.role,
+            )),
+        }
+    }
+
+    /// Drops the cached credentials of every role in the chain, so the next
+    /// [`Self::credentials`] fetches new ones.
     pub fn forget_credentials(&self, ctx: &Context) -> Result<()> {
         RoleCache::new(ctx.paths.cli_cache_dir()).remove(&RoleCache::key(
             &self.session,
             &self.account,
             &self.role,
-        ))
+        ))?;
+        let cache = AssumeCache::new(ctx.paths.cli_cache_dir());
+        self.chain.iter().try_for_each(|step| cache.remove(step))
     }
 
-    /// The role's credentials, from the AWS CLI's role cache while they last. A missing login
-    /// is offered at the terminal, as for every command that lists.
+    /// Where STS is asked: the profile's region, else the main region of its partition.
+    fn sts_region(&self) -> Region {
+        self.region.clone().unwrap_or_else(|| {
+            Partition::of(&self.session.region)
+                .default_region
+                .parse()
+                .expect("a valid region")
+        })
+    }
+
+    /// The final role's credentials: the SSO role's, then each assumed role's in turn, each from
+    /// the AWS CLI's cache while it lasts. A missing login is offered at the terminal, as for
+    /// every command that lists.
     pub async fn credentials(&self, ctx: &Context) -> Result<RoleCredentials> {
-        role::credentials(
+        let mut creds = role::credentials(
             &RoleCache::new(ctx.paths.cli_cache_dir()),
             &self.session,
             &self.account,
             &self.role,
             async || ctx.usable_token(&self.session).await,
         )
-        .await
+        .await?;
+        let cache = AssumeCache::new(ctx.paths.cli_cache_dir());
+        let region = self.sts_region();
+        for step in &self.chain {
+            creds = assume::credentials(&cache, step, &creds, &region).await?;
+        }
+        Ok(creds)
     }
 }
 
@@ -104,6 +161,7 @@ pub async fn resolve(
             label: row.label(),
             account: row.account.id,
             role: row.role,
+            chain: Vec::new(),
             region: None,
             profile: None,
             source: Source::Target,
@@ -153,39 +211,103 @@ pub async fn resolve(
         format!("profile `{name}`")
     };
     let region = section.get("region").map(str::parse).transpose()?;
-    if let Some((session, account, role)) = section
-        .get("credential_process")
-        .and_then(profiles::parse_process_command)
-    {
-        return Ok(RoleTarget {
-            session: files.sso_session(&session)?.into(),
-            account,
-            role,
-            region,
-            label,
-            profile: Some(name),
-            source,
-        });
-    }
-    let session = context::session_of_profile(files, &name)?;
-    let (Some(account), Some(role)) = (section.get("sso_account_id"), section.get("sso_role_name"))
-    else {
-        let err = Error::config(format!("{label} names no sso_account_id and sso_role_name"));
-        return Err(if name == "default" {
-            err.with_hint(pick_hint)
-        } else {
-            err
-        });
-    };
+    let hint = (name == "default").then_some(pick_hint);
+    let (session, account, role, chain) = role_chain(files, &name, 0, hint)?;
     Ok(RoleTarget {
         session,
-        account: account.parse()?,
-        role: role.parse()?,
+        account,
+        role,
+        chain,
         region,
         label,
         profile: Some(name),
         source,
     })
+}
+
+/// The SSO role profile `name` signs in with, and the roles it then assumes, first to last.
+/// `hint` is added when the profile names no role at all.
+fn role_chain(
+    files: &AwsFiles,
+    name: &str,
+    depth: usize,
+    hint: Option<&str>,
+) -> Result<(Session, AccountId, RoleName, Vec<AssumeRole>)> {
+    let Some(section) = files.config_profile(name) else {
+        return Err(Error::config(format!(
+            "no profile `{name}` in the AWS config file, though a source_profile names it"
+        )));
+    };
+    if let Some(arn) = section.get("role_arn") {
+        let unsupported = |what: &str| {
+            Error::config(format!(
+                "profile `{name}` uses {what}, which gac does not follow"
+            ))
+            .with_hint("use source_profile with an SSO profile, or the AWS CLI for this one")
+        };
+        if section.get("credential_source").is_some() {
+            return Err(unsupported("credential_source"));
+        }
+        if section.get("mfa_serial").is_some() {
+            return Err(unsupported("mfa_serial (an MFA prompt)"));
+        }
+        let Some(source) = section.get("source_profile") else {
+            return Err(Error::config(format!(
+                "profile `{name}` has a role_arn but no source_profile"
+            )));
+        };
+        if depth >= MAX_CHAIN {
+            return Err(Error::config(format!(
+                "the source_profile chain through profile `{name}` is longer than {MAX_CHAIN} links"
+            ))
+            .with_hint("check the source_profile settings for a loop"));
+        }
+        let (session, account, role, mut chain) = role_chain(files, source, depth + 1, None)?;
+        chain.push(AssumeRole {
+            role_arn: arn.parse()?,
+            session_name: section.get("role_session_name").map(str::to_owned),
+            external_id: section.get("external_id").map(str::to_owned),
+            duration_seconds: section
+                .get("duration_seconds")
+                .map(|seconds| {
+                    seconds.parse().map_err(|_| {
+                        Error::config(format!(
+                            "profile `{name}` has an unreadable duration_seconds `{seconds}`"
+                        ))
+                    })
+                })
+                .transpose()?,
+        });
+        return Ok((session, account, role, chain));
+    }
+    if let Some((session, account, role)) = section
+        .get("credential_process")
+        .and_then(profiles::parse_process_command)
+    {
+        return Ok((
+            files.sso_session(&session)?.into(),
+            account,
+            role,
+            Vec::new(),
+        ));
+    }
+    let session = context::session_of_profile(files, name)?;
+    let (Some(account), Some(role)) = (section.get("sso_account_id"), section.get("sso_role_name"))
+    else {
+        let label = if name == "default" {
+            "the [default] profile".to_owned()
+        } else {
+            format!("profile `{name}`")
+        };
+        let err = Error::config(format!(
+            "{label} names no sso_account_id and sso_role_name, nor a role_arn to assume"
+        ));
+        return Err(match hint {
+            Some(hint) => err.with_hint(hint),
+            None => err,
+        });
+    };
+    Ok((session, account.parse()?, role.parse()?, Vec::new()))
 }
 
 /// The profile that signs in as `row`: one gac synced, else any other, by name. `[default]`

@@ -1156,6 +1156,7 @@ dependencies = [
  "aws-runtime",
  "aws-sdk-sso",
  "aws-sdk-ssooidc",
+ "aws-sdk-sts",
  "aws-types",
  "base64",
  "clap",

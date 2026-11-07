@@ -123,6 +123,13 @@ fn settings(existing: Option<&Block>, args: &SyncArgs) -> Result<SyncSettings> {
     if !args.exclude.is_empty() {
         settings.exclude.clone_from(&args.exclude);
     }
+    if !args.chain.is_empty() {
+        settings.chain = args
+            .chain
+            .iter()
+            .map(|chain| chain.parse())
+            .collect::<Result<_>>()?;
+    }
     Ok(settings)
 }
 
@@ -133,8 +140,18 @@ fn unguarded(
     files: &AwsFiles,
     outside: &AwsFiles,
 ) -> Vec<PlannedProfile> {
-    let mut kept = Vec::with_capacity(planned.len());
+    let mut kept: Vec<PlannedProfile> = Vec::with_capacity(planned.len());
     for profile in planned {
+        // Chained profiles come after the profiles they chain from.
+        if let Some(chained) = &profile.chained
+            && !kept.iter().any(|p| p.name == chained.source)
+        {
+            ui::warn(format!(
+                "skipped profile `{}`: its source_profile `{}` was skipped",
+                profile.name, chained.source
+            ));
+            continue;
+        }
         match guards::sync_conflict(profile.name.as_str(), outside, files) {
             None => kept.push(profile),
             Some(conflict) => ui::warn(format!(
