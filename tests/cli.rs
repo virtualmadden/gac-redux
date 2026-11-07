@@ -554,6 +554,60 @@ fn select_writes_the_default_profile() {
 }
 
 #[test]
+fn select_print_names_the_roles_profile_and_writes_nothing() {
+    let sandbox = Sandbox::with_session();
+    login_device(&sandbox);
+    sandbox.gac().arg("sync").assert().success();
+    // A hand-written profile for the same role: the synced one is preferred.
+    let mut config = sandbox.config();
+    config.push_str(
+        "\n[profile aaa]\nsso_session = corp\nsso_account_id = 777788889999\nsso_role_name = PowerUser\n",
+    );
+    sandbox.write_config(&config);
+
+    sandbox
+        .gac()
+        .args(["select", "--print", "sandbox/PowerUser"])
+        .assert()
+        .success()
+        .stdout("sandbox/PowerUser\n");
+    assert_eq!(sandbox.config(), config);
+
+    // Without a synced profile, a hand-written one is printed.
+    sandbox
+        .gac()
+        .args(["sync", "--exclude", "sandbox/*"])
+        .assert()
+        .success();
+    let config = sandbox.config();
+    sandbox
+        .gac()
+        .args(["select", "--print", "777788889999/PowerUser"])
+        .assert()
+        .success()
+        .stdout("aaa\n");
+
+    // With none at all, the hint points to sync.
+    sandbox
+        .gac()
+        .args(["select", "--print", "sandbox/ReadOnly"])
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(predicate::str::contains(
+            "no profile in the AWS config file signs in as sandbox/ReadOnly",
+        ))
+        .stderr(predicate::str::contains("gac sync --session corp"));
+    assert_eq!(sandbox.config(), config);
+
+    sandbox
+        .gac()
+        .args(["select", "--print", "--clear"])
+        .assert()
+        .code(2);
+}
+
+#[test]
 fn select_adopts_a_hand_written_default_only_with_consent() {
     let sandbox = Sandbox::new();
     let before = format!("{SESSION}\n# No account on purpose.\n");
@@ -2160,6 +2214,24 @@ mod terminal {
         session.exp_eof().unwrap();
         assert_eq!(exit_code(&session), 0);
         assert_eq!(sandbox.mock.counter("credentials"), 1);
+    }
+
+    #[test]
+    fn select_print_picks_from_the_list_and_writes_nothing() {
+        let sandbox = Sandbox::with_session();
+        login_device(&sandbox);
+        sandbox.gac().arg("sync").assert().success();
+        let config = sandbox.config();
+        let mut session = spawn(&sandbox, &["select", "--print"]);
+        // The list is drawn, and reading keys, once its help line is.
+        session.exp_string("enter to choose").unwrap();
+        // The first row is payments-prod/AdministratorAccess; one down is ReadOnly.
+        session.send("\x1b[B\r").unwrap();
+        session.flush().unwrap();
+        let rest = session.exp_eof().unwrap();
+        assert!(rest.contains("payments-prod/ReadOnly\r\n"), "{rest}");
+        assert_eq!(exit_code(&session), 0);
+        assert_eq!(sandbox.config(), config);
     }
 
     #[test]

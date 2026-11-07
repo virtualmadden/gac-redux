@@ -136,6 +136,41 @@ pub async fn resolve(
     })
 }
 
+/// The profile that signs in as `row`: one gac synced, else any other, by name. `[default]`
+/// does not count, since it changes with `gac select`.
+pub fn profile_of<'a>(ctx: &Context, files: &'a AwsFiles, row: &Row) -> Result<Option<&'a str>> {
+    let signs_in_as_row = |name: &&str| {
+        let Some(section) = files.config_profile(name).filter(|_| *name != "default") else {
+            return false;
+        };
+        if let Some((session, account, role)) = section
+            .get("credential_process")
+            .and_then(profiles::parse_process_command)
+        {
+            return session == row.session && account == row.account.id && role == row.role;
+        }
+        section.get("sso_session") == Some(row.session.as_str())
+            && section.get("sso_account_id") == Some(row.account.id.as_str())
+            && section.get("sso_role_name") == Some(row.role.as_str())
+    };
+    let text = files.config_text();
+    let synced: Vec<&str> = ctx
+        .blocks(files)?
+        .iter()
+        .flat_map(|block| block.profile_names(text))
+        .collect();
+    let candidates: Vec<&str> = files
+        .config_profile_names()
+        .into_iter()
+        .filter(signs_in_as_row)
+        .collect();
+    Ok(candidates
+        .iter()
+        .find(|name| synced.contains(name))
+        .or(candidates.first())
+        .copied())
+}
+
 /// The profile the environment names, and the variable that named it.
 fn profile_from_env() -> Option<(String, &'static str)> {
     ["AWS_PROFILE", "AWS_DEFAULT_PROFILE"]
