@@ -116,6 +116,7 @@ fn man_writes_a_page_per_command() {
         [
             "gac-completions.1",
             "gac-doctor.1",
+            "gac-env.1",
             "gac-exec.1",
             "gac-list.1",
             "gac-login.1",
@@ -1711,4 +1712,201 @@ fn exec_without_a_login_exits_3() {
         .code(3)
         .stderr(predicate::str::contains("gac login --session corp"));
     assert_eq!(sandbox.mock.counter("credentials"), 0);
+}
+
+/// `gac env` output with the mock's secrets and the expiry replaced by placeholders.
+fn redacted(sandbox: &Sandbox, text: &str) -> String {
+    let mut text = text.to_owned();
+    for secret in sandbox.mock.secrets() {
+        text = text.replace(&secret, "[secret]");
+    }
+    let expiration = regex_lite_timestamp(&text);
+    text.replace(&expiration, "[expiration]")
+}
+
+/// The first `YYYY-MM-DDTHH:MM:SSZ` timestamp in `text`.
+fn regex_lite_timestamp(text: &str) -> String {
+    let bytes = text.as_bytes();
+    (0..bytes.len().saturating_sub(20))
+        .map(|i| &text[i..i + 20])
+        .find(|s| {
+            s.bytes().enumerate().all(|(i, b)| match i {
+                4 | 7 => b == b'-',
+                10 => b == b'T',
+                13 | 16 => b == b':',
+                19 => b == b'Z',
+                _ => b.is_ascii_digit(),
+            })
+        })
+        .expect("an expiration timestamp")
+        .to_owned()
+}
+
+#[test]
+fn env_prints_the_credentials_for_every_shell() {
+    let sandbox = Sandbox::with_session();
+    login_device(&sandbox);
+    let print = |format: &str| {
+        let output = sandbox
+            .gac()
+            .args([
+                "env",
+                "sandbox/ReadOnly",
+                "--region",
+                "eu-west-1",
+                "--format",
+                format,
+            ])
+            .assert()
+            .success()
+            .stderr("");
+        redacted(&sandbox, &stdout(output.get_output()))
+    };
+    insta::assert_snapshot!(print("sh"), @r"
+    export AWS_ACCESS_KEY_ID='ASIAMOCK77778888'
+    export AWS_SECRET_ACCESS_KEY='[secret]'
+    export AWS_SESSION_TOKEN='[secret]'
+    export AWS_CREDENTIAL_EXPIRATION='[expiration]'
+    unset AWS_PROFILE
+    unset AWS_DEFAULT_PROFILE
+    unset AWS_SECURITY_TOKEN
+    export AWS_REGION='eu-west-1'
+    export AWS_DEFAULT_REGION='eu-west-1'
+    ");
+    insta::assert_snapshot!(print("fish"), @r"
+    set -gx AWS_ACCESS_KEY_ID 'ASIAMOCK77778888'
+    set -gx AWS_SECRET_ACCESS_KEY '[secret]'
+    set -gx AWS_SESSION_TOKEN '[secret]'
+    set -gx AWS_CREDENTIAL_EXPIRATION '[expiration]'
+    set -e AWS_PROFILE
+    set -e AWS_DEFAULT_PROFILE
+    set -e AWS_SECURITY_TOKEN
+    set -gx AWS_REGION 'eu-west-1'
+    set -gx AWS_DEFAULT_REGION 'eu-west-1'
+    ");
+    insta::assert_snapshot!(print("powershell"), @r"
+    $env:AWS_ACCESS_KEY_ID = 'ASIAMOCK77778888'
+    $env:AWS_SECRET_ACCESS_KEY = '[secret]'
+    $env:AWS_SESSION_TOKEN = '[secret]'
+    $env:AWS_CREDENTIAL_EXPIRATION = '[expiration]'
+    Remove-Item -Path Env:AWS_PROFILE -ErrorAction SilentlyContinue
+    Remove-Item -Path Env:AWS_DEFAULT_PROFILE -ErrorAction SilentlyContinue
+    Remove-Item -Path Env:AWS_SECURITY_TOKEN -ErrorAction SilentlyContinue
+    $env:AWS_REGION = 'eu-west-1'
+    $env:AWS_DEFAULT_REGION = 'eu-west-1'
+    ");
+    insta::assert_snapshot!(print("json"), @r#"
+    {
+      "AWS_ACCESS_KEY_ID": "ASIAMOCK77778888",
+      "AWS_CREDENTIAL_EXPIRATION": "[expiration]",
+      "AWS_DEFAULT_PROFILE": null,
+      "AWS_DEFAULT_REGION": "eu-west-1",
+      "AWS_PROFILE": null,
+      "AWS_REGION": "eu-west-1",
+      "AWS_SECRET_ACCESS_KEY": "[secret]",
+      "AWS_SECURITY_TOKEN": null,
+      "AWS_SESSION_TOKEN": "[secret]"
+    }
+    "#);
+    assert_eq!(
+        sandbox.mock.counter("credentials"),
+        1,
+        "every format after the first used the cache"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn eval_of_env_sets_and_unset_clears_the_credentials_in_a_shell() {
+    let sandbox = Sandbox::with_session();
+    login_device(&sandbox);
+    let set = stdout(
+        sandbox
+            .gac()
+            .args(["env", "sandbox/ReadOnly"])
+            .assert()
+            .success()
+            .get_output(),
+    );
+    let unset = stdout(
+        sandbox
+            .gac()
+            .args(["env", "--unset"])
+            .assert()
+            .success()
+            .get_output(),
+    );
+    let script = sandbox.home().join("eval.sh");
+    std::fs::write(
+        &script,
+        "eval \"$1\"\nprintf '%s\\n' \"$AWS_ACCESS_KEY_ID\" \"$AWS_SECRET_ACCESS_KEY\" \"${AWS_PROFILE-unset}\"\neval \"$2\"\nprintf '%s\\n' \"${AWS_ACCESS_KEY_ID-cleared}\"\n",
+    )
+    .unwrap();
+    let output = std::process::Command::new("sh")
+        .arg(&script)
+        .arg(&set)
+        .arg(&unset)
+        .env("AWS_PROFILE", "dev")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", stderr(&output));
+    let lines: Vec<String> = stdout(&output).lines().map(str::to_owned).collect();
+    assert_eq!(lines[0], "ASIAMOCK77778888");
+    assert!(sandbox.mock.secrets().contains(&lines[1]));
+    assert_eq!(lines[2], "unset");
+    assert_eq!(lines[3], "cleared");
+}
+
+#[test]
+fn env_unset_needs_no_login_and_conflicts_with_a_role() {
+    let sandbox = Sandbox::new();
+    sandbox
+        .gac()
+        .args(["env", "--unset", "--format", "fish"])
+        .assert()
+        .success()
+        .stdout(
+            "set -e AWS_ACCESS_KEY_ID\nset -e AWS_SECRET_ACCESS_KEY\nset -e AWS_SESSION_TOKEN\nset -e AWS_CREDENTIAL_EXPIRATION\n",
+        );
+    sandbox
+        .gac()
+        .args(["env", "--unset", "sandbox/ReadOnly"])
+        .assert()
+        .code(2);
+}
+
+/// Where PowerShell is installed (as on the CI runners), its output loads in PowerShell.
+#[test]
+fn env_powershell_output_loads_in_powershell() {
+    let sandbox = Sandbox::with_session();
+    login_device(&sandbox);
+    let set = stdout(
+        sandbox
+            .gac()
+            .args(["env", "sandbox/ReadOnly", "--format", "powershell"])
+            .assert()
+            .success()
+            .get_output(),
+    );
+    let script = sandbox.home().join("load.ps1");
+    std::fs::write(
+        &script,
+        format!(
+            "{set}Write-Output $env:AWS_ACCESS_KEY_ID\nWrite-Output \"profile=$env:AWS_PROFILE\"\n"
+        ),
+    )
+    .unwrap();
+    let Ok(output) = std::process::Command::new("pwsh")
+        .args(["-NoProfile", "-NonInteractive", "-File"])
+        .arg(&script)
+        .env("AWS_PROFILE", "dev")
+        .output()
+    else {
+        return; // PowerShell is not installed
+    };
+    assert!(output.status.success(), "{}", stderr(&output));
+    assert_eq!(
+        stdout(&output).replace('\r', ""),
+        "ASIAMOCK77778888\nprofile=\n"
+    );
 }

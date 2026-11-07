@@ -56,7 +56,7 @@ and role when no profile is named. It takes over a `[default]` you wrote only wh
 its lines, and `gac select --clear` removes the account and role again.
 
 For a tool that reads only access keys, `gac exec` fetches the role's credentials and runs the
-tool with them in its environment. They are cached in `~/.aws/cli/cache` exactly as the AWS CLI
+tool with them in its environment, and `gac env` prints them for the current shell. They are cached in `~/.aws/cli/cache` exactly as the AWS CLI
 caches them, so `gac` and `aws` reuse each other's, and `gac logout` deletes them.
 
 `gac` never edits a line outside its own blocks, and it skips any profile name that already has a
@@ -84,6 +84,7 @@ $ aws s3 ls --profile payments-prod/ReadOnly
 | `gac sync` | Writes and prunes the managed block. `--name TEMPLATE`, `--include`/`--exclude GLOB`, `--region`, `--reset`, `--refresh`, `--dry-run` |
 | `gac list` | Accounts and roles, from a one-hour inventory cache. `--json`, `--refresh` |
 | `gac exec -- CMD` | Runs a command with a role's keys in `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`, for tools that cannot use SSO profiles. The role is `ACCOUNT/ROLE`, else that of `--profile`, `AWS_PROFILE` or `[default]`. Exits with the command's code. `--region`, `--force` |
+| `gac env` | Prints the variables `gac exec` sets as shell commands: `eval "$(gac env)"`. `--format sh\|fish\|powershell\|json`, `--unset` prints the commands that clear them, `--region` |
 | `gac doctor` | Checks the AWS files and caches, each problem with a suggested fix. `--fix` applies the mechanical ones; a fix to lines you wrote shows its diff and asks first (`--yes` skips asking). `--json` |
 | `gac completions SHELL` | Prints a completion script for `bash`, `zsh`, `fish`, `powershell` or `elvish` |
 
