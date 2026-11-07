@@ -790,6 +790,9 @@ fn the_inventory_cache_is_bound_to_the_token_that_listed_it() {
     assert_eq!(sandbox.mock.counter("accounts"), 2);
 }
 
+/// The slowest test, about 20s: after a few throttles the SDK's adaptive retry slows its own
+/// request rate and recovers gradually. Standard retry with more attempts was faster on
+/// average but erratic, and sent several times the throttled requests.
 #[test]
 fn the_fan_out_survives_portal_throttling() {
     let accounts: Vec<_> = (0..24)
@@ -1697,6 +1700,22 @@ fn exec_passes_the_exit_code_through_and_refuses_to_nest() {
         .stderr(predicate::str::contains(
             "could not run `gac-no-such-command`",
         ));
+}
+
+#[test]
+fn exec_and_env_without_a_session_point_to_setup() {
+    let sandbox = Sandbox::new();
+    for command in [&["exec", "--", "x"][..], &["env"]] {
+        sandbox
+            .gac()
+            .args(command)
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains("there is no [default] profile"))
+            .stderr(predicate::str::contains(
+                "run `gac setup`, then `gac select`",
+            ));
+    }
 }
 
 #[test]

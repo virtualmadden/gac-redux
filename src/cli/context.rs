@@ -154,10 +154,7 @@ impl Context {
             ));
         }
         match files.session_names().as_slice() {
-            [] => Err(
-                Error::config("no [sso-session] is configured in the AWS config file")
-                    .with_hint("run `gac setup`"),
-            ),
+            [] => Err(no_sessions()),
             [only] => Ok(files.sso_session(&only.parse()?)?.into()),
             many => Err(Error::usage(format!(
                 "more than one session is configured: {}",
@@ -166,6 +163,12 @@ impl Context {
             .with_hint("run `gac select` to pick a default profile, or pass --session NAME")),
         }
     }
+}
+
+/// The error for a config file with no `[sso-session]` to act on.
+pub fn no_sessions() -> Error {
+    Error::config("no [sso-session] is configured in the AWS config file")
+        .with_hint("run `gac setup`")
 }
 
 /// The `sso_session` of the `[default]` profile: the session tools use without --profile.
