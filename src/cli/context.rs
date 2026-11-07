@@ -4,10 +4,11 @@ use std::time::Duration;
 
 use jiff::{SignedDuration, Timestamp};
 
-use crate::auth::token::SsoCache;
+use crate::auth::token::{CachedToken, SsoCache};
 use crate::auth::{self, Session};
 use crate::aws_files::managed_block::{self, Block};
 use crate::aws_files::{AwsFiles, AwsPaths};
+use crate::cli::{LoginArgs, login};
 use crate::domain::SessionName;
 use crate::error::{Error, Result};
 use crate::fsx::{self, FileLock, ModePolicy};
@@ -68,6 +69,32 @@ impl Context {
         SsoCache::new(self.paths.sso_cache_dir())
     }
 
+    /// A usable SSO token for `session`, refreshed if due. When it needs a login and gac may
+    /// prompt, offers to sign in as `gac login` would, and goes on with the new token.
+    pub async fn usable_token(&self, session: &Session) -> Result<CachedToken> {
+        match auth::usable_token(&self.token_store(), session).await {
+            Err(Error::LoginRequired {
+                target,
+                login_args,
+                reason,
+            }) if self.can_prompt() => {
+                let question = format!("Not logged in to {target}. Sign in now?");
+                let later = format!("or run `gac login {login_args}` later");
+                if ui::prompt::confirm(&question, &later, true)? {
+                    login::sign_in(self, session, &LoginArgs::default()).await
+                } else {
+                    // The error gives the reason and the `gac login` hint.
+                    Err(Error::LoginRequired {
+                        target,
+                        login_args,
+                        reason,
+                    })
+                }
+            }
+            result => result,
+        }
+    }
+
     pub async fn files(&self) -> Result<AwsFiles> {
         AwsFiles::load(&self.paths).await
     }
@@ -102,9 +129,9 @@ impl Context {
 
     /// The session's accounts and roles: from the inventory cache while it is fresh and was made
     /// with the current token's lineage, otherwise (or with `refresh`) from the portal. Either way
-    /// a usable SSO token is required, which may be refreshed first.
+    /// a usable SSO token is required, which may be refreshed or signed in for first.
     pub async fn accounts(&self, session: &Session, refresh: bool) -> Result<Snapshot<Account>> {
-        let token = auth::usable_token(&self.token_store(), session).await?;
+        let token = self.usable_token(session).await?;
         let inventory = Inventory::new(
             &self.paths.state_dir().join("inventory"),
             session.cache_key(),

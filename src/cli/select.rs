@@ -153,6 +153,7 @@ fn adopt(ctx: &Context, args: &SelectArgs) -> Result<bool> {
     ui::prompt::confirm(
         "Let gac manage the [default] section you wrote?",
         "its lines are kept; `gac select --clear` removes the account and role again",
+        false,
     )
 }
 

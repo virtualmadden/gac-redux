@@ -62,6 +62,10 @@ proptest = "1"
 tokio = { version = "1", features = ["rt", "macros", "net", "time", "sync", "test-util"] }
 ureq = { version = "3", default-features = false }
 
+[target.'cfg(unix)'.dev-dependencies]
+# Drives the prompts through a pseudo-terminal, as a person at the terminal sees them.
+rexpect = "0.6"
+
 [profile.release]
 strip = true
 lto = true

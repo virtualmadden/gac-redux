@@ -138,5 +138,5 @@ fn consent(ctx: &Context, fix: &Fix, text: &str, updated: &str) -> Result<bool> 
         first.make_ascii_uppercase();
     }
     message.push('?');
-    ui::prompt::confirm(&message, "it edits lines you wrote, as shown above")
+    ui::prompt::confirm(&message, "it edits lines you wrote, as shown above", false)
 }

@@ -50,10 +50,10 @@ pub fn select(
         .map_err(prompt_error)
 }
 
-/// Asks a yes/no question; anything but yes is no.
-pub fn confirm(message: &str, help: &str) -> Result<bool> {
+/// Asks a yes/no question; Enter takes `default`.
+pub fn confirm(message: &str, help: &str, default: bool) -> Result<bool> {
     Confirm::new(message)
-        .with_default(false)
+        .with_default(default)
         .with_help_message(help)
         .prompt()
         .map_err(prompt_error)
