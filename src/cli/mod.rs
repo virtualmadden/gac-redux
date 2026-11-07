@@ -111,7 +111,7 @@ struct SetupArgs {
     region: Option<String>,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Default, Args)]
 struct LoginArgs {
     /// Log in for the session of this profile; legacy inline-SSO profiles work too.
     #[arg(short, long, value_name = "NAME")]

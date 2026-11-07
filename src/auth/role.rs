@@ -11,8 +11,8 @@ use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 
-use crate::auth::token::TokenStore;
-use crate::auth::{Session, SessionKind, usable_token};
+use crate::auth::token::CachedToken;
+use crate::auth::{Session, SessionKind};
 use crate::domain::{AccountId, RoleName};
 use crate::error::Result;
 use crate::fsx::{self, ModePolicy};
@@ -127,20 +127,20 @@ impl RoleCache {
 }
 
 /// Credentials for the account and role: from the cache while they last, otherwise from
-/// `GetRoleCredentials` with a usable SSO token, which may be refreshed first.
+/// `GetRoleCredentials` with the SSO token `token` gets, only then.
 pub async fn credentials(
-    store: &impl TokenStore,
     cache: &RoleCache,
     session: &Session,
     account: &AccountId,
     role: &RoleName,
+    token: impl AsyncFnOnce() -> Result<CachedToken>,
 ) -> Result<RoleCredentials> {
     let key = RoleCache::key(session, account, role);
     if let Some(creds) = cache.load(&key, Timestamp::now()) {
         tracing::debug!(%key, expiration = %creds.expiration, "using cached role credentials");
         return Ok(creds);
     }
-    let token = usable_token(store, session).await?;
+    let token = token().await?;
     let creds = Portal::new(session)
         .await
         .role_credentials(&token.access_token, account, role)

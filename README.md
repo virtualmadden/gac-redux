@@ -92,8 +92,10 @@ $ aws s3 ls --profile payments-prod/ReadOnly
 | `gac completions SHELL` | Prints a completion script for `bash`, `zsh`, `fish`, `powershell` or `elvish` |
 
 With more than one session configured, a command uses `--session NAME`, else the session of
-`--profile`, else `GAC_REDUX_SESSION`, else the session of the `[default]` profile. Data goes to stdout; prompts, links and progress go to stderr. Exit codes: `0` ok, `1` error, `2` usage,
-`3` login required, `130` interrupted. `-v`/`-vv` log to stderr and never print a secret.
+`--profile`, else `GAC_REDUX_SESSION`, else the session of the `[default]` profile. Data goes to stdout; prompts, links and progress go to stderr. A command that needs a login
+asks to sign in first when run in a terminal; with `--no-input`, without a terminal, and always
+in `gac credential-process`, it exits with code `3` instead. Exit codes: `0` ok, `1` error,
+`2` usage, `3` login required, `130` interrupted. `-v`/`-vv` log to stderr and never print a secret.
 
 `gac` honors `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_ENDPOINT_URL_SSO`,
 `AWS_ENDPOINT_URL_SSO_OIDC` and `NO_COLOR`. Its own state lives in `~/.aws/gac-redux/` (mode 0700).

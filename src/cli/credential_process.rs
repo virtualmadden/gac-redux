@@ -4,8 +4,8 @@
 
 use serde::Serialize;
 
-use crate::auth::Session;
 use crate::auth::role::{self, RoleCache};
+use crate::auth::{self, Session};
 use crate::cli::CredentialProcessArgs;
 use crate::cli::context::Context;
 use crate::domain::{AccountId, RoleName};
@@ -33,12 +33,13 @@ pub async fn run(ctx: &Context, args: CredentialProcessArgs) -> Result<()> {
     let role: RoleName = args.role_name.parse()?;
     let files = ctx.files().await?;
     let session = Session::from(files.sso_session(name)?);
+    // The AWS CLI and SDKs run this unattended, so a missing login is an error, never a prompt.
     let creds = role::credentials(
-        &ctx.token_store(),
         &RoleCache::new(ctx.paths.cli_cache_dir()),
         &session,
         &account,
         &role,
+        async || auth::usable_token(&ctx.token_store(), &session).await,
     )
     .await?;
     let output = Output {

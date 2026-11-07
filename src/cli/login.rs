@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use jiff::Timestamp;
 
-use crate::auth::{self, Flow, LoginOptions};
+use crate::auth::botocore_json::timestamp;
+use crate::auth::token::CachedToken;
+use crate::auth::{self, Flow, LoginOptions, Session};
 use crate::cli::LoginArgs;
 use crate::cli::context::Context;
 use crate::error::{Error, Result};
@@ -16,6 +18,11 @@ const PKCE_TIMEOUT: Duration = Duration::from_secs(600);
 pub async fn run(ctx: &Context, args: LoginArgs) -> Result<()> {
     let files = ctx.files().await?;
     let session = ctx.resolve_session(&files, args.profile.as_deref())?;
+    sign_in(ctx, &session, &args).await.map(drop)
+}
+
+/// Signs in to `session` with the flow `args` asks for, and saves the token.
+pub async fn sign_in(ctx: &Context, session: &Session, args: &LoginArgs) -> Result<CachedToken> {
     let over_ssh = ["SSH_CONNECTION", "SSH_TTY"]
         .iter()
         .any(|var| std::env::var_os(var).is_some_and(|v| !v.is_empty()));
@@ -58,7 +65,7 @@ pub async fn run(ctx: &Context, args: LoginArgs) -> Result<()> {
     let token = auth::login(
         &ctx.token_store(),
         &ctx.paths.sso_cache_dir(),
-        &session,
+        session,
         &options,
     )
     .await?;
@@ -70,7 +77,7 @@ pub async fn run(ctx: &Context, args: LoginArgs) -> Result<()> {
     ui::notice(format!(
         "Logged in to {}. The token is valid until {}{refresh}.",
         session.label(),
-        token.expires_at
+        timestamp::format(token.expires_at)
     ));
-    Ok(())
+    Ok(token)
 }
