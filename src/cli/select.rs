@@ -1,7 +1,6 @@
 //! `gac select`: pick the account and role of the `[default]` profile, which the AWS CLI and SDKs
 //! use when no profile is named.
 
-use crate::auth::Session;
 use crate::aws_files::default_block::{
     self, ACCOUNT_KEY, DefaultError, Found, ROLE_KEY, SESSION_KEY,
 };
@@ -9,25 +8,11 @@ use crate::aws_files::section::Section;
 use crate::aws_files::{AwsFiles, managed_block};
 use crate::cli::SelectArgs;
 use crate::cli::context::Context;
-use crate::domain::{RoleName, SessionName};
+use crate::cli::target::{self, Row};
+use crate::domain::SessionName;
 use crate::error::{Error, Result};
-use crate::portal::Account;
-use crate::profiles::{self, SyncSettings};
+use crate::profiles::SyncSettings;
 use crate::ui;
-
-/// One account and role a session can use.
-#[derive(Debug, Clone)]
-struct Row {
-    session: SessionName,
-    account: Account,
-    role: RoleName,
-}
-
-impl Row {
-    fn label(&self) -> String {
-        format!("{}/{}", self.account.name, self.role)
-    }
-}
 
 pub async fn run(ctx: &Context, args: SelectArgs) -> Result<()> {
     let files = ctx.files().await?;
@@ -37,13 +22,13 @@ pub async fn run(ctx: &Context, args: SelectArgs) -> Result<()> {
         return clear(ctx, text, found).await;
     }
 
-    let rows = rows(ctx, &files).await?;
+    let rows = target::rows(ctx, &files).await?;
     let current = match &found {
         Found::Managed(section) | Found::HandWritten(section) => Some(section),
         Found::Absent => None,
     };
     let chosen = if let Some(target) = &args.target {
-        find_target(&rows, target)?
+        target::find(&rows, target)?
     } else {
         if !ctx.can_prompt() {
             return Err(
@@ -171,90 +156,6 @@ fn adopt(ctx: &Context, args: &SelectArgs) -> Result<bool> {
     )
 }
 
-/// Every account and role of `--session`, or of every session. Sessions that need a login are
-/// skipped with a warning while others can still be listed.
-async fn rows(ctx: &Context, files: &AwsFiles) -> Result<Vec<Row>> {
-    let names: Vec<SessionName> = match ctx.typed_session() {
-        Some(name) => vec![name.clone()],
-        None => files
-            .session_names()
-            .into_iter()
-            .map(str::parse)
-            .collect::<Result<_>>()?,
-    };
-    if names.is_empty() {
-        return Err(
-            Error::config("no [sso-session] is configured in the AWS config file")
-                .with_hint("run `gac setup`"),
-        );
-    }
-    let mut rows = Vec::new();
-    let mut needs_login = None;
-    for name in &names {
-        let session = Session::from(files.sso_session(name)?);
-        match ctx.accounts(&session, false).await {
-            Ok(snapshot) => {
-                for account in snapshot.items {
-                    for role in &account.roles {
-                        rows.push(Row {
-                            session: name.clone(),
-                            account: account.clone(),
-                            role: role.clone(),
-                        });
-                    }
-                }
-            }
-            Err(err @ Error::LoginRequired { .. }) if names.len() > 1 => {
-                ui::warn(format!(
-                    "skipping session `{name}`: {err} (run `gac login --session {name}`)"
-                ));
-                needs_login = Some(err);
-            }
-            Err(err) => return Err(err),
-        }
-    }
-    if rows.is_empty() {
-        return Err(needs_login.unwrap_or_else(|| {
-            Error::config("no accounts or roles are assigned to you in IAM Identity Center")
-        }));
-    }
-    Ok(rows)
-}
-
-/// The row `ACCOUNT/ROLE` names, where ACCOUNT is the account name, its profile-name slug or its
-/// id, ignoring case.
-fn find_target(rows: &[Row], target: &str) -> Result<Row> {
-    let wanted = target.to_lowercase();
-    let matches: Vec<&Row> = rows
-        .iter()
-        .filter(|row| {
-            let role = row.role.as_str();
-            [
-                row.account.name.clone(),
-                profiles::account_slug(&row.account),
-                row.account.id.to_string(),
-            ]
-            .iter()
-            .any(|account| format!("{account}/{role}").to_lowercase() == wanted)
-        })
-        .collect();
-    match matches.as_slice() {
-        [only] => Ok((*only).clone()),
-        [] => Err(
-            Error::usage(format!("no account and role match `{target}`"))
-                .with_hint("run `gac list` to see them, and pass ACCOUNT/ROLE"),
-        ),
-        many => Err(Error::usage(format!(
-            "`{target}` matches in more than one session: {}",
-            many.iter()
-                .map(|row| row.session.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ))
-        .with_hint("pass --session NAME as well")),
-    }
-}
-
 /// Shows the rows as `gac list` does, starting on the first, and returns the one chosen.
 fn pick(rows: &[Row], current: Option<&Section>) -> Result<Row> {
     let current =
@@ -341,19 +242,6 @@ fn broken(ctx: &Context, err: &DefaultError) -> Error {
 mod tests {
     use super::*;
 
-    fn row(session: &str, id: &str, name: &str, role: &str) -> Row {
-        Row {
-            session: session.parse().unwrap(),
-            account: Account {
-                id: id.parse().unwrap(),
-                name: name.into(),
-                email: None,
-                roles: Vec::new(),
-            },
-            role: role.parse().unwrap(),
-        }
-    }
-
     #[test]
     fn aligns_rows_like_gac_list() {
         let cells = [
@@ -365,31 +253,5 @@ mod tests {
         111122223333  payments-prod    AdministratorAccess
         444455556666  Shared Services  ReadOnly             (default)
         ");
-    }
-
-    #[test]
-    fn finds_a_target_by_name_slug_or_id() {
-        let rows = [
-            row("corp", "111122223333", "Payments Prod", "ReadOnly"),
-            row("corp", "111122223333", "Payments Prod", "Admin"),
-            row("other", "444455556666", "Payments Prod", "ReadOnly"),
-        ];
-        assert_eq!(
-            find_target(&rows, "payments-prod/admin")
-                .unwrap()
-                .role
-                .as_str(),
-            "Admin"
-        );
-        assert_eq!(
-            find_target(&rows, "444455556666/ReadOnly")
-                .unwrap()
-                .session
-                .as_str(),
-            "other"
-        );
-        let ambiguous = find_target(&rows, "Payments Prod/ReadOnly").unwrap_err();
-        assert!(ambiguous.to_string().contains("corp, other"));
-        assert!(find_target(&rows, "nope/ReadOnly").is_err());
     }
 }

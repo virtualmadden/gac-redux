@@ -12,6 +12,9 @@ pub mod exit {
     pub const ERROR: u8 = 1;
     pub const USAGE: u8 = 2;
     pub const LOGIN_REQUIRED: u8 = 3;
+    /// `gac exec` could not run the command, as a shell reports it.
+    pub const CANNOT_EXECUTE: u8 = 126;
+    pub const COMMAND_NOT_FOUND: u8 = 127;
     pub const INTERRUPTED: u8 = 130;
 }
 
@@ -56,6 +59,14 @@ pub enum Error {
     Service {
         operation: &'static str,
         message: String,
+    },
+
+    /// The command `gac exec` was given could not be started.
+    #[error("could not run `{command}`")]
+    Spawn {
+        command: String,
+        #[source]
+        source: io::Error,
     },
 
     #[error("{context}")]
@@ -116,6 +127,10 @@ impl Error {
             Self::Usage { .. } => exit::USAGE,
             Self::LoginRequired { .. } => exit::LOGIN_REQUIRED,
             Self::Interrupted => exit::INTERRUPTED,
+            Self::Spawn { source, .. } if source.kind() == io::ErrorKind::NotFound => {
+                exit::COMMAND_NOT_FOUND
+            }
+            Self::Spawn { .. } => exit::CANNOT_EXECUTE,
             _ => exit::ERROR,
         }
     }

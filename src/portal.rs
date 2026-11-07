@@ -1,14 +1,16 @@
-//! The IAM Identity Center portal API (`sso`): accounts, roles and logout.
+//! The IAM Identity Center portal API (`sso`): accounts, roles, role credentials and logout.
 
 use std::sync::Arc;
 
 use aws_sdk_sso::Client;
 use aws_sdk_sso::error::{ProvideErrorMetadata, SdkError};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 use crate::auth::Session;
+use crate::auth::role::RoleCredentials;
 use crate::domain::{AccountId, RoleName};
 use crate::error::{self, Error, Result};
 use crate::secret::{ExposeSecret, SecretString};
@@ -106,6 +108,49 @@ impl Portal {
                 .then_with(|| a.id.cmp(&b.id))
         });
         Ok(accounts)
+    }
+
+    /// `GetRoleCredentials`: short-lived credentials for one account and role.
+    pub async fn role_credentials(
+        &self,
+        token: &SecretString,
+        account: &AccountId,
+        role: &RoleName,
+    ) -> Result<RoleCredentials> {
+        let output = self
+            .client
+            .get_role_credentials()
+            .access_token(token.expose_secret())
+            .account_id(account.as_str())
+            .role_name(role.as_str())
+            .send()
+            .await
+            .map_err(|err| match err.code() {
+                Some("ForbiddenException" | "ResourceNotFoundException") => {
+                    Error::config(format!("you have no role {role} in account {account}"))
+                        .with_hint("run `gac list` to see the accounts and roles you can use")
+                }
+                _ => self.convert("GetRoleCredentials", &err),
+            })?;
+        let missing = || Error::Service {
+            operation: "GetRoleCredentials",
+            message: "the response has no complete credentials".into(),
+        };
+        let creds = output.role_credentials().ok_or_else(missing)?;
+        let (Some(access_key_id), Some(secret_access_key), Some(session_token)) = (
+            creds.access_key_id(),
+            creds.secret_access_key(),
+            creds.session_token(),
+        ) else {
+            return Err(missing());
+        };
+        let expiration = Timestamp::from_millisecond(creds.expiration()).map_err(|_| missing())?;
+        Ok(RoleCredentials {
+            access_key_id: access_key_id.to_owned(),
+            secret_access_key: SecretString::from(secret_access_key.to_owned()),
+            session_token: SecretString::from(session_token.to_owned()),
+            expiration,
+        })
     }
 
     /// `sso:Logout`: revokes the token server-side.

@@ -172,7 +172,7 @@ pub fn default_session(files: &AwsFiles) -> Option<&str> {
     files.config_profile("default")?.get("sso_session")
 }
 
-fn session_of_profile(files: &AwsFiles, name: &str) -> Result<Session> {
+pub fn session_of_profile(files: &AwsFiles, name: &str) -> Result<Session> {
     let profile = files
         .config_profile(name)
         .ok_or_else(|| Error::config(format!("no profile `{name}` in the AWS config file")))?;
