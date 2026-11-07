@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use jiff::{SignedDuration, Timestamp};
 
-use crate::auth::token::{CachedToken, SsoCache};
+use crate::auth::token::{CachedToken, SsoCache, TokenStore};
 use crate::auth::{self, Session};
 use crate::aws_files::managed_block::{self, Block};
 use crate::aws_files::{AwsFiles, AwsPaths};
@@ -132,17 +132,7 @@ impl Context {
     /// a usable SSO token is required, which may be refreshed or signed in for first.
     pub async fn accounts(&self, session: &Session, refresh: bool) -> Result<Snapshot<Account>> {
         let token = self.usable_token(session).await?;
-        let inventory = Inventory::new(
-            &self.paths.state_dir().join("inventory"),
-            session.cache_key(),
-            INVENTORY_TTL,
-        );
-        let scope = format!(
-            "{} {} {}",
-            session.start_url,
-            session.region,
-            token.lineage()
-        );
+        let (inventory, scope) = self.inventory(session, &token);
         let now = Timestamp::now();
         if !refresh
             && let Some(snapshot) = inventory
@@ -157,6 +147,31 @@ impl Context {
             .accounts_with_roles(&token.access_token)
             .await?;
         inventory.store(&scope, accounts, Timestamp::now())
+    }
+
+    /// The session's accounts as last listed with its cached token, however old, without
+    /// refreshing or asking the portal. `None` without a token or a listing.
+    pub fn cached_accounts(&self, session: &Session) -> Option<Vec<Account>> {
+        let token = self.token_store().load(session.cache_key()).ok()??;
+        let (inventory, scope) = self.inventory(session, &token);
+        inventory.load(&scope).map(|snapshot| snapshot.items)
+    }
+
+    /// The inventory cache of `session`, and the scope a listing made with `token` is stored
+    /// under: another start URL, region or sign-in is another listing.
+    fn inventory(&self, session: &Session, token: &CachedToken) -> (Inventory, String) {
+        let inventory = Inventory::new(
+            &self.paths.state_dir().join("inventory"),
+            session.cache_key(),
+            INVENTORY_TTL,
+        );
+        let scope = format!(
+            "{} {} {}",
+            session.start_url,
+            session.region,
+            token.lineage()
+        );
+        (inventory, scope)
     }
 
     /// The session a command acts on: `--session`, else the session of `--profile`, else

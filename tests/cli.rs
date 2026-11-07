@@ -126,6 +126,7 @@ fn man_writes_a_page_per_command() {
             "gac-setup.1",
             "gac-status.1",
             "gac-sync.1",
+            "gac-whoami.1",
             "gac.1"
         ]
     );
@@ -1786,6 +1787,133 @@ fn exec_without_a_login_exits_3() {
         .code(3)
         .stderr(predicate::str::contains("gac login --session corp"));
     assert_eq!(sandbox.mock.counter("credentials"), 0);
+}
+
+/// The config `whoami` tests read: a `[default]` block, and a `dev` profile with a region.
+fn whoami_config(sandbox: &Sandbox) {
+    sandbox.write_config(&format!(
+        "{SESSION}\n{}\n[profile dev]\nsso_session = corp\nsso_account_id = 777788889999\nsso_role_name = PowerUser\nregion = eu-west-1\n",
+        default_block("111122223333", "ReadOnly")
+    ));
+}
+
+#[test]
+fn whoami_answers_from_local_files_alone() {
+    let sandbox = Sandbox::with_session();
+    whoami_config(&sandbox);
+    let portal_calls = |sandbox: &Sandbox| {
+        [
+            "accounts",
+            "roles",
+            "credentials",
+            "refresh",
+            "unauthorized",
+        ]
+        .map(|name| sandbox.mock.counter(name))
+    };
+
+    // Without a login it still answers, from the files alone.
+    let output = sandbox.gac().arg("whoami").assert().success();
+    let text = String::from_utf8_lossy(&output.get_output().stdout).into_owned();
+    for line in [
+        "profile      [default] (no --profile or AWS_PROFILE)\n",
+        "session      corp\n",
+        "account      111122223333\n",
+        "role         ReadOnly\n",
+        "region       not set\n",
+        "token        not logged in; run `gac login --session corp`\n",
+        "credentials  none cached; the next use fetches them\n",
+    ] {
+        assert!(text.contains(line), "{line:?} in\n{text}");
+    }
+
+    // After a listing and a use, the account name and both expiries come from the caches,
+    // without another portal call.
+    login_device(&sandbox);
+    sandbox.gac().arg("list").assert().success();
+    sandbox
+        .gac()
+        .args(["exec", "--"])
+        .args(exit_with("0"))
+        .assert()
+        .success();
+    let before = portal_calls(&sandbox);
+    let output = sandbox.gac().args(["whoami", "--json"]).assert().success();
+    let json: Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    assert_eq!(json["profile"], "default");
+    assert_eq!(json["source"], "[default]");
+    assert_eq!(json["accountId"], "111122223333");
+    assert_eq!(json["accountName"], "payments-prod");
+    assert_eq!(json["roleName"], "ReadOnly");
+    assert_eq!(json["token"]["state"], "valid");
+    assert_eq!(json["credentials"]["state"], "valid");
+    assert_eq!(json["environmentCredentials"], false);
+    let text = sandbox.gac().arg("whoami").output().unwrap();
+    let text = String::from_utf8_lossy(&text.stdout).into_owned();
+    assert!(
+        text.contains("account      111122223333 (payments-prod)\n"),
+        "{text}"
+    );
+    assert!(text.contains("credentials  cached until "), "{text}");
+    assert_eq!(portal_calls(&sandbox), before);
+}
+
+#[test]
+fn whoami_names_the_rule_that_picked_the_profile() {
+    let sandbox = Sandbox::with_session();
+    whoami_config(&sandbox);
+    login_device(&sandbox);
+    sandbox.gac().arg("list").assert().success();
+    sandbox
+        .gac()
+        .args(["whoami", "--profile", "dev"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "profile      dev (from --profile)\n",
+        ))
+        .stdout(predicate::str::contains(
+            "account      777788889999 (sandbox)\n",
+        ))
+        .stdout(predicate::str::contains("region       eu-west-1\n"))
+        .stdout(predicate::str::contains("credentials  none cached"));
+    sandbox
+        .gac()
+        .arg("whoami")
+        .env("AWS_PROFILE", "dev")
+        .env("AWS_REGION", "us-east-2")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "profile      dev (from AWS_PROFILE)\n",
+        ))
+        .stdout(predicate::str::contains(
+            "region       us-east-2 (from AWS_REGION)\n",
+        ));
+    sandbox
+        .gac()
+        .arg("whoami")
+        .env("AWS_PROFILE", "nope")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "no profile `nope` in the AWS config file (from AWS_PROFILE)",
+        ))
+        .stderr(predicate::str::contains(
+            "unset AWS_PROFILE to use [default]",
+        ));
+
+    // Inside `gac exec`, the keys in the environment win over any profile.
+    sandbox
+        .gac()
+        .arg("whoami")
+        .env("AWS_ACCESS_KEY_ID", "ASIAEXAMPLE")
+        .env("GAC_REDUX_EXEC", "profile `dev`")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "AWS_ACCESS_KEY_ID is set by `gac exec` as profile `dev`: AWS tools use those keys, not this profile.",
+        ));
 }
 
 /// `gac env` output with the mock's secrets and the expiry replaced by placeholders.

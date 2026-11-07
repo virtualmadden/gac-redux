@@ -20,7 +20,7 @@ use crate::portal::Portal;
 use crate::secret::{self, SecretString};
 
 /// botocore's `CachedCredentialFetcher` refreshes this long before expiry.
-const EXPIRY_WINDOW: SignedDuration = SignedDuration::from_mins(15);
+pub const EXPIRY_WINDOW: SignedDuration = SignedDuration::from_mins(15);
 
 /// Short-lived credentials for one account and role.
 #[derive(Debug, Clone)]
@@ -107,6 +107,13 @@ impl RoleCache {
             session_token: entry.credentials.session_token,
             expiration,
         })
+    }
+
+    /// When the cached credentials expire, even inside the window `load` refuses them in.
+    pub fn expiration(&self, key: &str) -> Option<Timestamp> {
+        let bytes = fsx::read_optional(&self.path(key)).ok()??;
+        let entry: Entry = serde_json::from_slice(&bytes).ok()?;
+        entry.credentials.expiration.parse().ok()
     }
 
     pub fn store(&self, key: &str, account: &AccountId, creds: &RoleCredentials) -> Result<()> {
@@ -200,12 +207,14 @@ mod tests {
         assert_eq!(written["Credentials"]["AccountId"], "111122223333");
 
         assert!(cache.load("k", now).is_some());
+        assert_eq!(cache.expiration("k"), Some(creds.expiration));
         let late: Timestamp = "2026-11-06T12:46:00Z".parse().unwrap();
         assert!(
             cache.load("k", late).is_none(),
             "within 15 minutes of expiry"
         );
         assert!(cache.load("missing", now).is_none());
+        assert_eq!(cache.expiration("missing"), None);
         std::fs::write(dir.path().join("cache/bad.json"), "{").unwrap();
         assert!(cache.load("bad", now).is_none());
     }

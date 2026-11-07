@@ -14,6 +14,7 @@ mod setup;
 mod status;
 mod sync;
 mod target;
+mod whoami;
 
 use std::ffi::OsString;
 use std::io::IsTerminal;
@@ -85,6 +86,8 @@ enum Command {
     Sync(SyncArgs),
     /// List the accounts and roles you can use.
     List(ListArgs),
+    /// Show the account and role AWS tools use now, and why. Reads only local files.
+    Whoami(WhoamiArgs),
     /// Run a command with a role's credentials in its environment.
     Exec(ExecArgs),
     /// Print a role's credentials as shell exports, e.g. `eval "$(gac env)"`.
@@ -162,6 +165,17 @@ struct SelectArgs {
     /// Print the name of the chosen role's profile instead of writing [default].
     #[arg(long, conflicts_with_all = ["clear", "adopt"])]
     print: bool,
+}
+
+#[derive(Debug, Args)]
+struct WhoamiArgs {
+    /// Describe this profile instead of the one the environment or [default] picks.
+    #[arg(short, long, value_name = "NAME")]
+    profile: Option<String>,
+
+    /// Print JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, Args)]
@@ -384,6 +398,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
         Command::Status(args) => status::run(&ctx, args).await,
         Command::Sync(args) => sync::run(&ctx, args).await,
         Command::List(args) => list::run(&ctx, args).await,
+        Command::Whoami(args) => whoami::run(&ctx, args).await,
         Command::Exec(args) => exec::run(&ctx, args).await,
         Command::Env(args) => env::run(&ctx, args).await,
         Command::CredentialProcess(args) => credential_process::run(&ctx, args).await,
