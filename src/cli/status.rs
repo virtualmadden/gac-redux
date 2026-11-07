@@ -202,7 +202,7 @@ fn block_status(config: &str, block: &Block) -> BlockStatus {
     let settings = SyncSettings::from_header(&block.header).unwrap_or_default();
     BlockStatus {
         profiles,
-        mode: "sso",
+        mode: settings.mode.as_str(),
         name: settings.name.to_string(),
         region: settings.region.map(|r| r.to_string()),
         include: settings.include,
@@ -261,7 +261,10 @@ fn render(status: &Status, now: Timestamp) -> String {
                 || "none (run `gac sync`)".to_owned(),
                 |b| {
                     let plural = if b.profiles == 1 { "" } else { "s" };
-                    format!("{} profile{plural}, name={}", b.profiles, b.name)
+                    format!(
+                        "{} profile{plural}, mode={}, name={}",
+                        b.profiles, b.mode, b.name
+                    )
                 },
             );
             let _ = writeln!(out, "  sync block    {block}");

@@ -54,7 +54,7 @@ roff = "1"
 
 [dev-dependencies]
 assert_cmd = "2.2"
-aws-config = { version = "1.13", default-features = false, features = ["default-https-client", "rt-tokio", "behavior-version-latest", "sso"] }
+aws-config = { version = "1.13", default-features = false, features = ["default-https-client", "rt-tokio", "behavior-version-latest", "sso", "credentials-process"] }
 aws-credential-types = "1"
 insta = { version = "1.49", features = ["json", "filters"] }
 predicates = "3"

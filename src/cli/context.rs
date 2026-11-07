@@ -13,6 +13,7 @@ use crate::error::{Error, Result};
 use crate::fsx::{self, FileLock, ModePolicy};
 use crate::inventory::{Inventory, Snapshot};
 use crate::portal::{Account, Portal};
+use crate::profiles;
 use crate::ui;
 
 /// How long a listing of accounts and roles is reused before asking the portal again.
@@ -178,6 +179,12 @@ pub fn session_of_profile(files: &AwsFiles, name: &str) -> Result<Session> {
         .ok_or_else(|| Error::config(format!("no profile `{name}` in the AWS config file")))?;
     if let Some(session) = profile.get("sso_session") {
         return Ok(files.sso_session(&session.parse()?)?.into());
+    }
+    if let Some((session, _, _)) = profile
+        .get("credential_process")
+        .and_then(profiles::parse_process_command)
+    {
+        return Ok(files.sso_session(&session)?.into());
     }
     if let Some(legacy) = files.legacy_sso_profile(name)? {
         return Ok(legacy.into());

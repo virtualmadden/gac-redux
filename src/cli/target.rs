@@ -93,12 +93,25 @@ pub async fn resolve(
             ))
         });
     };
-    let session = context::session_of_profile(files, &name)?;
     let label = if name == "default" {
         "the [default] profile".to_owned()
     } else {
         format!("profile `{name}`")
     };
+    let region = section.get("region").map(str::parse).transpose()?;
+    if let Some((session, account, role)) = section
+        .get("credential_process")
+        .and_then(profiles::parse_process_command)
+    {
+        return Ok(RoleTarget {
+            session: files.sso_session(&session)?.into(),
+            account,
+            role,
+            region,
+            label,
+        });
+    }
+    let session = context::session_of_profile(files, &name)?;
     let (Some(account), Some(role)) = (section.get("sso_account_id"), section.get("sso_role_name"))
     else {
         let err = Error::config(format!("{label} names no sso_account_id and sso_role_name"));
@@ -112,7 +125,7 @@ pub async fn resolve(
         session,
         account: account.parse()?,
         role: role.parse()?,
-        region: section.get("region").map(str::parse).transpose()?,
+        region,
         label,
     })
 }
