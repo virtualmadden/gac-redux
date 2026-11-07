@@ -21,6 +21,7 @@ use crate::error::{Error, Result};
 use crate::fsx;
 use crate::portal::Portal;
 use crate::secret;
+use botocore_json::timestamp;
 use oidc::{ClientCredentials, Oidc, TokenGrant};
 use registration::Grant;
 use token::{CachedToken, TokenState, TokenStore};
@@ -215,7 +216,7 @@ pub async fn usable_token(store: &impl TokenStore, session: &Session) -> Result<
         Err(err) if token.state(now) == TokenState::Expired => {
             Err(session.login_required(format!(
                 "the SSO token expired at {} and could not be refreshed: {err}",
-                token.expires_at
+                timestamp::format(token.expires_at)
             )))
         }
         Err(err) => {
@@ -233,7 +234,10 @@ fn load_token(store: &impl TokenStore, session: &Session) -> Result<CachedToken>
 
 fn usable(token: CachedToken, session: &Session, now: Timestamp) -> Result<CachedToken> {
     if token.state(now) == TokenState::Expired {
-        Err(session.login_required(format!("the SSO token expired at {}", token.expires_at)))
+        Err(session.login_required(format!(
+            "the SSO token expired at {}",
+            timestamp::format(token.expires_at)
+        )))
     } else {
         tracing::debug!(token = %secret::shape(&token.access_token), expires_at = %token.expires_at, "using the cached SSO token");
         Ok(token)
