@@ -38,14 +38,15 @@ pub struct RoleTarget {
 }
 
 impl RoleTarget {
-    /// The role's credentials, from the AWS CLI's role cache while they last.
+    /// The role's credentials, from the AWS CLI's role cache while they last. A missing login
+    /// is offered at the terminal, as for every command that lists.
     pub async fn credentials(&self, ctx: &Context) -> Result<RoleCredentials> {
         role::credentials(
-            &ctx.token_store(),
             &RoleCache::new(ctx.paths.cli_cache_dir()),
             &self.session,
             &self.account,
             &self.role,
+            async || ctx.usable_token(&self.session).await,
         )
         .await
     }
