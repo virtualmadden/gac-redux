@@ -89,6 +89,7 @@ $ aws s3 ls --profile payments-prod/ReadOnly
 | `gac exec -- CMD` | Runs a command with a role's keys in `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`, for tools that cannot use SSO profiles. The role is `ACCOUNT/ROLE`, else that of `--profile`, `AWS_PROFILE` or `[default]`. Exits with the command's code. `--region`, `--force` |
 | `gac credential-process` | Prints a role's credentials as `credential_process` JSON. The profiles `gac sync --mode process` writes run it. `--session`, `--account-id`, `--role-name` |
 | `gac env` | Prints the variables `gac exec` sets as shell commands: `eval "$(gac env)"`. `--format sh\|fish\|powershell\|json`, `--unset` prints the commands that clear them, `--region` |
+| `gac console` | Opens the AWS console signed in as a role, through the AWS federation endpoint, without the access portal. Picks the role like `gac exec`. `--region`, `--destination s3/home` (or a console URL), `--print` prints the one-time sign-in link instead; over SSH it is printed |
 | `gac doctor` | Checks the AWS files and caches, each problem with a suggested fix. `--fix` applies the mechanical ones; a fix to lines you wrote shows its diff and asks first (`--yes` skips asking). `--json` |
 | `gac completions SHELL` | Prints a completion script for `bash`, `zsh`, `fish`, `powershell` or `elvish` |
 

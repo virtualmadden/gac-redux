@@ -267,6 +267,7 @@ async fn handle(state: &Arc<Mutex<State>>, req: Request<Incoming>) -> Reply {
         (Method::POST, "/device_authorization") => device_authorization(&mut s, &body),
         (Method::POST, "/token") => token(&mut s, &body),
         (Method::GET, "/authorize") => authorize(&mut s, &query),
+        (Method::GET, "/federation") => federation(&mut s, &query),
         (method, portal_path) => {
             if let Some(limit) = s.rate_limit {
                 let (start, count) = s.window;
@@ -624,6 +625,31 @@ fn list_roles(s: &mut State, query: &HashMap<String, String>) -> Reply {
         StatusCode::OK,
         &json!({"roleList": items, "nextToken": next}),
     )
+}
+
+/// The AWS federation endpoint's `getSigninToken`: only for role credentials the mock issued.
+fn federation(s: &mut State, query: &HashMap<String, String>) -> Reply {
+    s.count("signin_token");
+    let session: Value = query
+        .get("Session")
+        .and_then(|session| serde_json::from_str(session).ok())
+        .unwrap_or(Value::Null);
+    let issued = |key: &str| {
+        session[key]
+            .as_str()
+            .is_some_and(|value| s.secrets.iter().any(|secret| secret == value))
+    };
+    if query.get("Action").map(String::as_str) != Some("getSigninToken")
+        || !session["sessionId"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("ASIAMOCK"))
+        || !issued("sessionKey")
+        || !issued("sessionToken")
+    {
+        return error(StatusCode::BAD_REQUEST, "InvalidSession", "invalid session");
+    }
+    let token = s.secret("SIGNIN-TOKEN");
+    reply(StatusCode::OK, &json!({ "SigninToken": token }))
 }
 
 fn role_credentials(s: &mut State, query: &HashMap<String, String>) -> Reply {

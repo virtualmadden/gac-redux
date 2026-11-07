@@ -116,6 +116,11 @@ impl RoleCache {
         entry.credentials.expiration.parse().ok()
     }
 
+    /// Forgets the cached credentials, so the next use fetches new ones.
+    pub fn remove(&self, key: &str) -> Result<()> {
+        fsx::remove_if_exists(&self.path(key)).map(drop)
+    }
+
     pub fn store(&self, key: &str, account: &AccountId, creds: &RoleCredentials) -> Result<()> {
         fsx::ensure_private_dir(&self.dir)?;
         let entry = Entry {

@@ -115,6 +115,7 @@ fn man_writes_a_page_per_command() {
         pages,
         [
             "gac-completions.1",
+            "gac-console.1",
             "gac-credential-process.1",
             "gac-doctor.1",
             "gac-env.1",
@@ -1789,8 +1790,8 @@ fn exec_without_a_login_exits_3() {
     assert_eq!(sandbox.mock.counter("credentials"), 0);
 }
 
-/// The config `whoami` tests read: a `[default]` block, and a `dev` profile with a region.
-fn whoami_config(sandbox: &Sandbox) {
+/// A `[default]` block without a region, and a `dev` profile with one.
+fn role_profiles_config(sandbox: &Sandbox) {
     sandbox.write_config(&format!(
         "{SESSION}\n{}\n[profile dev]\nsso_session = corp\nsso_account_id = 777788889999\nsso_role_name = PowerUser\nregion = eu-west-1\n",
         default_block("111122223333", "ReadOnly")
@@ -1800,7 +1801,7 @@ fn whoami_config(sandbox: &Sandbox) {
 #[test]
 fn whoami_answers_from_local_files_alone() {
     let sandbox = Sandbox::with_session();
-    whoami_config(&sandbox);
+    role_profiles_config(&sandbox);
     let portal_calls = |sandbox: &Sandbox| {
         [
             "accounts",
@@ -1861,7 +1862,7 @@ fn whoami_answers_from_local_files_alone() {
 #[test]
 fn whoami_names_the_rule_that_picked_the_profile() {
     let sandbox = Sandbox::with_session();
-    whoami_config(&sandbox);
+    role_profiles_config(&sandbox);
     login_device(&sandbox);
     sandbox.gac().arg("list").assert().success();
     sandbox
@@ -1914,6 +1915,126 @@ fn whoami_names_the_rule_that_picked_the_profile() {
         .stdout(predicate::str::contains(
             "AWS_ACCESS_KEY_ID is set by `gac exec` as profile `dev`: AWS tools use those keys, not this profile.",
         ));
+}
+
+#[test]
+fn console_signs_in_as_the_role_through_the_federation_endpoint() {
+    let sandbox = Sandbox::with_session();
+    role_profiles_config(&sandbox);
+    login_device(&sandbox);
+    let link = |args: &[&str]| -> url::Url {
+        let output = sandbox
+            .gac()
+            .args(["console", "--print"])
+            .args(args)
+            .assert()
+            .success();
+        let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+        url::Url::parse(stdout.trim_end()).unwrap()
+    };
+    let query = |url: &url::Url, key: &str| {
+        url.query_pairs()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.into_owned())
+    };
+
+    let url = link(&["--profile", "dev"]);
+    assert_eq!(url.path(), "/federation");
+    assert_eq!(query(&url, "Action").as_deref(), Some("login"));
+    assert_eq!(
+        query(&url, "Issuer").as_deref(),
+        Some("https://mock-example.awsapps.com/start")
+    );
+    assert_eq!(
+        query(&url, "Destination").as_deref(),
+        Some("https://console.aws.amazon.com/console/home?region=eu-west-1")
+    );
+    let token = query(&url, "SigninToken").unwrap();
+    assert!(
+        sandbox.mock.secrets().contains(&token),
+        "the mock's sign-in token"
+    );
+    assert_eq!(sandbox.mock.counter("signin_token"), 1);
+
+    // The role credentials come from the cache the second time; the sign-in token is new.
+    let url = link(&[
+        "--profile",
+        "dev",
+        "--destination",
+        "s3/home",
+        "--region",
+        "us-east-2",
+    ]);
+    assert_eq!(
+        query(&url, "Destination").as_deref(),
+        Some("https://console.aws.amazon.com/s3/home?region=us-east-2")
+    );
+    assert_eq!(sandbox.mock.counter("credentials"), 1);
+    assert_eq!(sandbox.mock.counter("signin_token"), 2);
+    assert_eq!(
+        query(&link(&[]), "Destination").as_deref(),
+        Some("https://console.aws.amazon.com/console/home"),
+        "[default] names no region"
+    );
+
+    // Over SSH the link is printed for the person, on stderr.
+    sandbox
+        .gac()
+        .args(["console", "-p", "dev"])
+        .env("SSH_CONNECTION", "10.0.0.1 22 10.0.0.2 22")
+        .assert()
+        .success()
+        .stdout("")
+        .stderr(predicate::str::contains(
+            "Open this link to sign in to the AWS console as profile `dev`.",
+        ))
+        .stderr(predicate::str::contains("SigninToken="));
+}
+
+#[test]
+fn console_replaces_cached_credentials_the_endpoint_refuses() {
+    let sandbox = Sandbox::with_session();
+    role_profiles_config(&sandbox);
+    login_device(&sandbox);
+    // Credentials the mock never issued, as if revoked before they expired.
+    let path = role_cache_path(&sandbox, "777788889999", "PowerUser");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        &path,
+        r#"{"ProviderType":"sso","Credentials":{"AccessKeyId":"ASIAREVOKED","SecretAccessKey":"x","SessionToken":"y","Expiration":"2099-01-01T00:00:00Z"}}"#,
+    )
+    .unwrap();
+    sandbox
+        .gac()
+        .args(["console", "--print", "-p", "dev"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("SigninToken="));
+    assert_eq!(
+        sandbox.mock.counter("signin_token"),
+        2,
+        "refused, then retried"
+    );
+    assert_eq!(
+        sandbox.mock.counter("credentials"),
+        1,
+        "fetched once, fresh"
+    );
+    let cached = std::fs::read_to_string(&path).unwrap();
+    assert!(!cached.contains("ASIAREVOKED"), "{cached}");
+}
+
+#[test]
+fn console_without_a_login_exits_3() {
+    let sandbox = Sandbox::with_session();
+    role_profiles_config(&sandbox);
+    sandbox
+        .gac()
+        .args(["console", "--print"])
+        .assert()
+        .code(3)
+        .stdout("");
+    assert_eq!(sandbox.mock.counter("signin_token"), 0);
 }
 
 /// `gac env` output with the mock's secrets and the expiry replaced by placeholders.

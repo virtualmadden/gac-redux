@@ -51,6 +51,9 @@ webbrowser = "1.2"
 clap_complete = "4.6"
 clap_mangen = "0.3"
 roff = "1"
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs", "std", "tls12"] }
+rustls-native-certs = "0.8"
+ureq = { version = "3.5", default-features = false, features = ["rustls-no-provider"] }
 
 [dev-dependencies]
 assert_cmd = "2.2"
@@ -60,7 +63,6 @@ insta = { version = "1.49", features = ["json", "filters"] }
 predicates = "3"
 proptest = "1"
 tokio = { version = "1", features = ["rt", "macros", "net", "time", "sync", "test-util"] }
-ureq = { version = "3", default-features = false }
 
 [target.'cfg(unix)'.dev-dependencies]
 # Drives the prompts through a pseudo-terminal, as a person at the terminal sees them.

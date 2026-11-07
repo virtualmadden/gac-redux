@@ -66,6 +66,15 @@ impl Source {
 }
 
 impl RoleTarget {
+    /// Drops the role's cached credentials, so the next [`Self::credentials`] fetches new ones.
+    pub fn forget_credentials(&self, ctx: &Context) -> Result<()> {
+        RoleCache::new(ctx.paths.cli_cache_dir()).remove(&RoleCache::key(
+            &self.session,
+            &self.account,
+            &self.role,
+        ))
+    }
+
     /// The role's credentials, from the AWS CLI's role cache while they last. A missing login
     /// is offered at the terminal, as for every command that lists.
     pub async fn credentials(&self, ctx: &Context) -> Result<RoleCredentials> {

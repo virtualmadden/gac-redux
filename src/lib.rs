@@ -11,6 +11,7 @@ mod cli;
 mod doctor;
 mod domain;
 mod error;
+mod federation;
 mod fsx;
 mod inventory;
 mod oauth;
