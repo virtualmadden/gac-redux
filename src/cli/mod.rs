@@ -1,5 +1,6 @@
 //! The command line: clap types and one orchestration function per command.
 
+mod console;
 mod context;
 mod credential_process;
 mod doctor;
@@ -92,6 +93,8 @@ enum Command {
     Exec(ExecArgs),
     /// Print a role's credentials as shell exports, e.g. `eval "$(gac env)"`.
     Env(EnvArgs),
+    /// Open the AWS console signed in as a role.
+    Console(ConsoleArgs),
     /// Print credentials as `credential_process` JSON, for process-mode profiles.
     CredentialProcess(CredentialProcessArgs),
     /// Check the AWS files and caches; --fix applies the mechanical fixes.
@@ -259,6 +262,32 @@ struct ExecArgs {
 
 #[derive(Debug, Args)]
 #[command(
+    after_help = "The role is ACCOUNT/ROLE, else that of --profile, AWS_PROFILE or the [default] profile.\nOver SSH the link is printed instead of opened. It signs in once, within 15 minutes."
+)]
+struct ConsoleArgs {
+    /// Use the account and role of this profile.
+    #[arg(short, long, value_name = "NAME", conflicts_with = "target")]
+    profile: Option<String>,
+
+    /// Open the console in this region.
+    #[arg(long, value_name = "REGION")]
+    region: Option<String>,
+
+    /// The console page: a URL, or a path such as `s3/home`.
+    #[arg(long, value_name = "PAGE")]
+    destination: Option<String>,
+
+    /// Print the sign-in link to stdout instead of opening a browser.
+    #[arg(long)]
+    print: bool,
+
+    /// The account and role, by account name or id, e.g. `payments-prod/ReadOnly`.
+    #[arg(value_name = "ACCOUNT/ROLE")]
+    target: Option<String>,
+}
+
+#[derive(Debug, Args)]
+#[command(
     after_help = "The role is ACCOUNT/ROLE, else that of --profile, AWS_PROFILE or the [default] profile.\nThe variables are those `gac exec` sets. Load them with `eval \"$(gac env)\"`, in fish with\n`gac env --format fish | source`, in PowerShell with `gac env --format powershell | Invoke-Expression`."
 )]
 struct EnvArgs {
@@ -383,6 +412,9 @@ impl Command {
             Command::Env(EnvArgs {
                 profile: Some(_), ..
             }) => Some(("env", "--profile <NAME>")),
+            Command::Console(ConsoleArgs {
+                profile: Some(_), ..
+            }) => Some(("console", "--profile <NAME>")),
             _ => None,
         }
     }
@@ -401,6 +433,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
         Command::Whoami(args) => whoami::run(&ctx, args).await,
         Command::Exec(args) => exec::run(&ctx, args).await,
         Command::Env(args) => env::run(&ctx, args).await,
+        Command::Console(args) => console::run(&ctx, args).await,
         Command::CredentialProcess(args) => credential_process::run(&ctx, args).await,
         Command::Doctor(args) => doctor::run(&ctx, args).await,
         Command::Completions(_) | Command::Man(_) => unreachable!("handled before the runtime"),
