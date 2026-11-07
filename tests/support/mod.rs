@@ -123,6 +123,12 @@ impl Sandbox {
                 cmd.env(name, value);
             }
         }
+        // The built `gac` comes first on PATH, so the `credential_process` profiles gac writes
+        // run it, not an installed one.
+        let gac_dir = Path::new(env!("CARGO_BIN_EXE_gac")).parent().unwrap();
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let dirs = std::iter::once(gac_dir.to_owned()).chain(std::env::split_paths(&path));
+        cmd.env("PATH", std::env::join_paths(dirs).unwrap());
         cmd.env("HOME", self.home())
             .env("USERPROFILE", self.home())
             .env("AWS_ENDPOINT_URL_SSO", &self.mock.url)

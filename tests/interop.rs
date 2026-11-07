@@ -411,3 +411,33 @@ fn gac_reuses_role_credentials_the_aws_cli_cached() {
         "gac found the AWS CLI's entry in ~/.aws/cli/cache"
     );
 }
+
+#[test]
+fn process_profiles_resolve_in_the_aws_cli_and_aws_config() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config(SESSION);
+    gac_login(&sandbox);
+    sandbox
+        .gac()
+        .args(["sync", "--mode", "process"])
+        .assert()
+        .success();
+    assert!(sandbox.config().contains(
+        "credential_process = gac credential-process --session corp --account-id 444455556666 --role-name ReadOnly"
+    ));
+
+    assert_eq!(
+        sdk_probe(&sandbox, "shared-services/ReadOnly").unwrap(),
+        "ASIAMOCK44445555"
+    );
+    assert_eq!(sandbox.mock.counter("credentials"), 1);
+    let Some(creds) = aws_export(&sandbox, "shared-services/ReadOnly") else {
+        return;
+    };
+    assert_eq!(creds["AccessKeyId"], "ASIAMOCK44445555");
+    assert_eq!(
+        sandbox.mock.counter("credentials"),
+        1,
+        "the AWS CLI's call to gac answered from the role cache"
+    );
+}

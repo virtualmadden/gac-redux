@@ -115,6 +115,7 @@ fn man_writes_a_page_per_command() {
         pages,
         [
             "gac-completions.1",
+            "gac-credential-process.1",
             "gac-doctor.1",
             "gac-env.1",
             "gac-exec.1",
@@ -690,7 +691,7 @@ fn state_and_blocks_from_before_the_rename_are_migrated() {
     assert!(sandbox.home().join(".aws/gac-redux/inventory").is_dir());
 
     let status = sandbox.gac().arg("status").assert().success();
-    assert!(stdout(status.get_output()).contains("1 profile, name={account}/{role}"));
+    assert!(stdout(status.get_output()).contains("1 profile, mode=sso, name={account}/{role}"));
     sandbox.gac().arg("sync").assert().success();
     let config = sandbox.config();
     assert!(!config.contains("# BEGIN gac sync"), "{config}");
@@ -1113,7 +1114,7 @@ fn status_shows_sessions_and_blocks_without_secrets() {
     let human = String::from_utf8_lossy(&human.get_output().stdout).into_owned();
     assert!(human.contains("session corp"));
     assert!(human.contains("refreshable"));
-    assert!(human.contains("5 profiles, name={account}/{role}"));
+    assert!(human.contains("5 profiles, mode=sso, name={account}/{role}"));
 
     let json = sandbox.gac().args(["status", "--json"]).assert().success();
     let text = String::from_utf8_lossy(&json.get_output().stdout).into_owned();
@@ -1908,5 +1909,144 @@ fn env_powershell_output_loads_in_powershell() {
     assert_eq!(
         stdout(&output).replace('\r', ""),
         "ASIAMOCK77778888\nprofile=\n"
+    );
+}
+
+#[test]
+fn credential_process_prints_the_json_credential_process_expects() {
+    let sandbox = Sandbox::with_session();
+    let args = [
+        "credential-process",
+        "--session",
+        "corp",
+        "--account-id",
+        "111122223333",
+        "--role-name",
+        "ReadOnly",
+    ];
+    // Without a login it fails as a credential_process must: nonzero, the reason on stderr.
+    sandbox
+        .gac()
+        .args(args)
+        .assert()
+        .code(3)
+        .stdout("")
+        .stderr(predicate::str::contains("gac login --session corp"));
+
+    login_device(&sandbox);
+    let output = sandbox.gac().args(args).assert().success();
+    let json: Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    assert_eq!(json["Version"], 1);
+    assert_eq!(json["AccessKeyId"], "ASIAMOCK11112222");
+    assert!(
+        sandbox
+            .mock
+            .secrets()
+            .contains(&json["SecretAccessKey"].as_str().unwrap().to_owned())
+    );
+    assert!(json["SessionToken"].is_string());
+    assert!(json["Expiration"].as_str().unwrap().ends_with('Z'));
+    sandbox.gac().args(args).assert().success();
+    assert_eq!(
+        sandbox.mock.counter("credentials"),
+        1,
+        "the second call used the cache"
+    );
+
+    sandbox
+        .gac()
+        .args([
+            "credential-process",
+            "--account-id",
+            "111122223333",
+            "--role-name",
+            "ReadOnly",
+        ])
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("needs --session NAME"));
+}
+
+#[test]
+fn sync_switches_a_block_between_modes_with_a_clean_diff() {
+    let sandbox = Sandbox::with_session();
+    login_device(&sandbox);
+    sandbox
+        .gac()
+        .args(["sync", "--include", "sandbox/*"])
+        .assert()
+        .success();
+    let sso = sandbox.config();
+
+    let diff = sandbox
+        .gac()
+        .args(["sync", "--mode", "process", "--dry-run"])
+        .assert()
+        .success();
+    insta::assert_snapshot!(
+        stdout(diff.get_output()).replace(&sandbox.config_path().display().to_string(), "config"),
+        @r"
+    --- config
+    +++ config
+    @@ -3,15 +3,11 @@
+     sso_region = us-west-2
+     sso_registration_scopes = sso:account:access
+     
+    -# BEGIN gac-redux sync session=corp mode=sso name={account}/{role} include=sandbox/*
+    +# BEGIN gac-redux sync session=corp mode=process name={account}/{role} include=sandbox/*
+     # Managed by gac-redux: edits inside this block are replaced on the next sync.
+     [profile sandbox/PowerUser]
+    -sso_session = corp
+    -sso_account_id = 777788889999
+    -sso_role_name = PowerUser
+    +credential_process = gac credential-process --session corp --account-id 777788889999 --role-name PowerUser
+     
+     [profile sandbox/ReadOnly]
+    -sso_session = corp
+    -sso_account_id = 777788889999
+    -sso_role_name = ReadOnly
+    +credential_process = gac credential-process --session corp --account-id 777788889999 --role-name ReadOnly
+     # END gac-redux sync session=corp
+    "
+    );
+    assert_eq!(sandbox.config(), sso, "a dry run writes nothing");
+
+    sandbox
+        .gac()
+        .args(["sync", "--mode", "process"])
+        .assert()
+        .success();
+    // The mode is stored in the BEGIN line, so a plain sync keeps it.
+    let process = sandbox.config();
+    sandbox.gac().arg("sync").assert().success();
+    assert_eq!(sandbox.config(), process);
+    let status = sandbox.gac().arg("status").assert().success();
+    assert!(
+        stdout(status.get_output()).contains("2 profiles, mode=process, name={account}/{role}"),
+        "{}",
+        stdout(status.get_output())
+    );
+    let json = sandbox.gac().args(["status", "--json"]).assert().success();
+    let json: Value = serde_json::from_slice(&json.get_output().stdout).unwrap();
+    assert_eq!(json["sessions"][0]["syncBlock"]["mode"], "process");
+
+    // exec and env take the role from a process-mode profile too.
+    let mut args = vec!["exec", "--profile", "sandbox/PowerUser", "--"];
+    args.extend(print_env());
+    let output = sandbox.gac().args(&args).assert().success();
+    assert_eq!(
+        parse_env(&stdout(output.get_output()))["AWS_ACCESS_KEY_ID"],
+        "ASIAMOCK77778888"
+    );
+
+    sandbox
+        .gac()
+        .args(["sync", "--mode", "sso"])
+        .assert()
+        .success();
+    assert_eq!(
+        sandbox.config(),
+        sso,
+        "switching back restores the same bytes"
     );
 }

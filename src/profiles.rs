@@ -1,5 +1,6 @@
 //! What `sync` writes: profile names from a template, the account and role selection, the
-//! settings stored in the block's BEGIN line, and the rendered profiles.
+//! settings stored in the block's BEGIN line, and the rendered profiles: native `sso-session`
+//! profiles, or `credential_process` profiles that run `gac credential-process`.
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -9,7 +10,9 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
 use crate::aws_files::SsoSessionConfig;
 use crate::aws_files::managed_block::{self, Header};
-use crate::domain::{ProfileName, Region, RoleName, SessionName, StartUrl, is_sdk_identifier_char};
+use crate::domain::{
+    AccountId, ProfileName, Region, RoleName, SessionName, StartUrl, is_sdk_identifier_char,
+};
 use crate::error::{Error, Result};
 use crate::portal::Account;
 
@@ -169,20 +172,49 @@ fn glob_set(patterns: &[String]) -> Result<Option<GlobSet>> {
         .map_err(|err| Error::usage(format!("invalid globs: {err}")))
 }
 
-/// The output mode of a sync block. Only native `sso-session` profiles exist so far;
-/// `credential_process` profiles are the planned second mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// The output mode of a sync block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
 pub enum Mode {
+    /// Native `sso-session` profiles, which the AWS CLI and current SDKs resolve themselves.
     #[default]
     Sso,
+    /// `credential_process` profiles that run `gac credential-process`, for tools and older SDKs
+    /// without SSO support.
+    Process,
 }
 
 impl Mode {
-    fn as_str(self) -> &'static str {
+    pub fn as_str(self) -> &'static str {
         match self {
             Self::Sso => "sso",
+            Self::Process => "process",
         }
     }
+}
+
+/// The `credential_process` command of a process-mode profile. It names `gac` on `PATH`, so an
+/// upgrade that moves the binary does not break the profiles.
+pub fn process_command(session: &SessionName, account: &AccountId, role: &RoleName) -> String {
+    format!("gac credential-process --session {session} --account-id {account} --role-name {role}")
+}
+
+/// The session, account and role of a `credential_process` command gac wrote.
+pub fn parse_process_command(command: &str) -> Option<(SessionName, AccountId, RoleName)> {
+    let words: Vec<&str> = command.split_whitespace().collect();
+    let ["gac", "credential-process", flags @ ..] = words.as_slice() else {
+        return None;
+    };
+    let value = |flag: &str| {
+        flags
+            .iter()
+            .position(|w| *w == flag)
+            .and_then(|i| flags.get(i + 1))
+    };
+    Some((
+        value("--session")?.parse().ok()?,
+        value("--account-id")?.parse().ok()?,
+        value("--role-name")?.parse().ok()?,
+    ))
 }
 
 /// The settings that produced a block, stored in its BEGIN line (S7): there is no gac config file.
@@ -206,6 +238,7 @@ impl SyncSettings {
         };
         let mode = match header.get("mode") {
             None | Some("sso") => Mode::Sso,
+            Some("process") => Mode::Process,
             Some(_) => return Err(unreadable("mode")),
         };
         Ok(Self {
@@ -335,10 +368,11 @@ pub fn render_session(session: &SsoSessionConfig) -> Vec<String> {
     lines
 }
 
-/// The block body: one native `sso-session` profile per planned entry.
+/// The block body: one profile per planned entry, in the block's mode.
 pub fn render_body(
     profiles: &[PlannedProfile],
     session: &SessionName,
+    mode: Mode,
     region: Option<&Region>,
 ) -> Vec<String> {
     let mut lines = Vec::new();
@@ -347,9 +381,17 @@ pub fn render_body(
             lines.push(String::new());
         }
         lines.push(format!("[profile {}]", profile.name));
-        lines.push(format!("sso_session = {session}"));
-        lines.push(format!("sso_account_id = {}", profile.account.id));
-        lines.push(format!("sso_role_name = {}", profile.role));
+        match mode {
+            Mode::Sso => {
+                lines.push(format!("sso_session = {session}"));
+                lines.push(format!("sso_account_id = {}", profile.account.id));
+                lines.push(format!("sso_role_name = {}", profile.role));
+            }
+            Mode::Process => lines.push(format!(
+                "credential_process = {}",
+                process_command(session, &profile.account.id, &profile.role)
+            )),
+        }
         if let Some(region) = region {
             lines.push(format!("region = {region}"));
         }
@@ -360,6 +402,26 @@ pub fn render_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_back_the_process_command_it_writes() {
+        let account: AccountId = "111122223333".parse().unwrap();
+        let role: RoleName = "Admin+Ops".parse().unwrap();
+        let command = process_command(&session(), &account, &role);
+        assert_eq!(
+            command,
+            "gac credential-process --session corp --account-id 111122223333 --role-name Admin+Ops"
+        );
+        assert_eq!(
+            parse_process_command(&command),
+            Some((session(), account, role))
+        );
+        assert_eq!(parse_process_command("aws-vault exec x --json"), None);
+        assert_eq!(
+            parse_process_command("gac credential-process --session corp"),
+            None
+        );
+    }
 
     #[test]
     fn suggests_the_portal_label() {
@@ -498,7 +560,7 @@ mod tests {
         )];
         let planned = plan(&accounts, &SyncSettings::default(), &session()).unwrap();
         let region: Region = "us-east-1".parse().unwrap();
-        insta::assert_snapshot!(render_body(&planned, &session(), Some(&region)).join("\n"), @r"
+        insta::assert_snapshot!(render_body(&planned, &session(), Mode::Sso, Some(&region)).join("\n"), @r"
         [profile payments-prod/AdministratorAccess]
         sso_session = corp
         sso_account_id = 111122223333

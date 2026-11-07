@@ -49,6 +49,7 @@ pub async fn run(ctx: &Context, args: SyncArgs) -> Result<()> {
     body.extend(profiles::render_body(
         &kept,
         &name,
+        settings.mode,
         settings.region.as_ref(),
     ));
     let block = managed_block::render(
@@ -107,6 +108,9 @@ fn settings(existing: Option<&Block>, args: &SyncArgs) -> Result<SyncSettings> {
         Some(block) if !args.reset => SyncSettings::from_header(&block.header)?,
         _ => SyncSettings::default(),
     };
+    if let Some(mode) = args.mode {
+        settings.mode = mode;
+    }
     if let Some(template) = &args.name {
         settings.name = template.parse()?;
     }

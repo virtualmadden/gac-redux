@@ -1,6 +1,7 @@
 //! The command line: clap types and one orchestration function per command.
 
 mod context;
+mod credential_process;
 mod doctor;
 mod env;
 mod exec;
@@ -24,6 +25,7 @@ use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 use crate::error::{Error, Result};
+use crate::profiles;
 use context::Context;
 
 const GLOBAL: &str = "Global options";
@@ -73,13 +75,13 @@ enum Command {
     Setup(SetupArgs),
     /// Sign in to IAM Identity Center and write the shared token cache.
     Login(LoginArgs),
-    /// Revoke the session, delete its cached token and the AWS CLI's SSO role credentials.
+    /// Revoke the session; delete its token and the AWS CLI's SSO role credentials.
     Logout(LogoutArgs),
     /// Pick the account and role of the [default] profile from a list.
     Select(SelectArgs),
     /// Show sessions, token and registration expiry, and managed blocks. No secrets.
     Status(StatusArgs),
-    /// Write native sso-session profiles for your accounts and roles into a managed block.
+    /// Write a profile per account and role into a managed block.
     Sync(SyncArgs),
     /// List the accounts and roles you can use.
     List(ListArgs),
@@ -87,7 +89,9 @@ enum Command {
     Exec(ExecArgs),
     /// Print a role's credentials as shell exports, e.g. `eval "$(gac env)"`.
     Env(EnvArgs),
-    /// Check the AWS files and caches for problems; --fix applies the mechanical fixes.
+    /// Print credentials as `credential_process` JSON, for process-mode profiles.
+    CredentialProcess(CredentialProcessArgs),
+    /// Check the AWS files and caches; --fix applies the mechanical fixes.
     Doctor(DoctorArgs),
     /// Print a shell completion script, e.g. `source <(gac completions zsh)`.
     Completions(CompletionsArgs),
@@ -165,6 +169,10 @@ struct StatusArgs {
 
 #[derive(Debug, Args)]
 struct SyncArgs {
+    /// Write native SSO profiles (`sso`), or `credential_process` profiles for tools without SSO support (`process`) [default: sso]
+    #[arg(long, value_enum, value_name = "MODE")]
+    mode: Option<profiles::Mode>,
+
     /// Profile-name template using `{account}`, `{account_id}`, `{role}` and `{session}` [default: `{account}/{role}`]
     #[arg(long, value_name = "TEMPLATE")]
     name: Option<String>,
@@ -255,6 +263,17 @@ struct EnvArgs {
     /// The account and role, by account name or id, e.g. `payments-prod/ReadOnly`.
     #[arg(value_name = "ACCOUNT/ROLE", conflicts_with = "unset")]
     target: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct CredentialProcessArgs {
+    /// The account id.
+    #[arg(long, value_name = "ID")]
+    account_id: String,
+
+    /// The role name.
+    #[arg(long, value_name = "ROLE")]
+    role_name: String,
 }
 
 #[derive(Debug, Args)]
@@ -363,6 +382,7 @@ async fn dispatch(cli: Cli) -> Result<()> {
         Command::List(args) => list::run(&ctx, args).await,
         Command::Exec(args) => exec::run(&ctx, args).await,
         Command::Env(args) => env::run(&ctx, args).await,
+        Command::CredentialProcess(args) => credential_process::run(&ctx, args).await,
         Command::Doctor(args) => doctor::run(&ctx, args).await,
         Command::Completions(_) | Command::Man(_) => unreachable!("handled before the runtime"),
     }
