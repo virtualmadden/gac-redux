@@ -141,7 +141,7 @@ jobs:
           archive=nfpm_${NFPM_VERSION}_Linux_${{ matrix.nfpm }}.tar.gz
           base=https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION
           curl -fsSLO "$base/$archive" -O "$base/checksums.txt"
-          grep -F "  $archive" checksums.txt | sha256sum -c -
+          awk -v name="$archive" '$2 == name' checksums.txt | sha256sum -c --strict -
           sudo tar -xzf "$archive" -C /usr/local/bin nfpm
           rm "$archive" checksums.txt
       - name: Package
