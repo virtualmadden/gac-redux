@@ -24,9 +24,19 @@ $ sudo apt install ./gac-redux-0.5.0-amd64.deb
 $ sudo dnf install ./gac-redux-0.5.0-x86_64.rpm
 ```
 
+On Windows (arm64 or x64), with [Scoop](https://scoop.sh) or winget:
+
+```powershell
+# Scoop
+scoop bucket add virtualmadden https://github.com/virtualmadden/scoop-bucket
+scoop install virtualmadden/gac-redux
+# or winget
+winget install virtualmadden.gac-redux
+```
+
 Or download the archive for your platform from
-[releases](https://github.com/virtualmadden/gac-redux/releases) (macOS and Linux on arm64 and
-x86_64, Windows on x86_64), check it against `SHA256SUMS`, and put `gac` on your `PATH`. To build
+[releases](https://github.com/virtualmadden/gac-redux/releases) (macOS, Linux and Windows, each
+on arm64 and x86_64), check it against `SHA256SUMS`, and put `gac` on your `PATH`. To build
 from source instead: `cargo install --locked --git https://github.com/virtualmadden/gac-redux`.
 
 Each archive also has `man/` with a page per command (`man gac`, `man gac-sync`) and

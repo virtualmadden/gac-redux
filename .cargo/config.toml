@@ -1,0 +1,4 @@
+# Link the C runtime into gac.exe, so it runs on a Windows without the Visual C++
+# Redistributable installed.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]
