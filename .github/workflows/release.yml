@@ -1,9 +1,9 @@
 name: Release
 
 # Pushing a tag vX.Y.Z (or vX.Y.Z-beta.N) that matches the version in Cargo.toml builds the
-# binaries, publishes a GitHub release (a pre-release when the version has a suffix), and updates
-# the formula in virtualmadden/homebrew-tap. A pull request that changes the release files runs
-# everything up to publishing, so a broken release is caught before the tag.
+# binaries and the Linux packages, publishes a GitHub release (a pre-release when the version has a
+# suffix), and updates the formula in virtualmadden/homebrew-tap. A pull request that changes the
+# release files runs everything up to publishing, so a broken release is caught before the tag.
 
 on:
   push:
@@ -115,8 +115,56 @@ jobs:
           path: ${{ env.NAME }}.*
           if-no-files-found: error
 
-  checksums:
+  # .deb and .rpm made from the Linux archives, then installed, run and removed on the
+  # distributions they are for.
+  linux-packages:
+    name: linux packages (${{ matrix.target }})
     needs: [version, build]
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, nfpm: x86_64 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm, nfpm: arm64 }
+    runs-on: ${{ matrix.os }}
+    env:
+      NAME: gac-redux-${{ needs.version.outputs.version }}-${{ matrix.target }}
+      VERSION: ${{ needs.version.outputs.version }}
+      NFPM_VERSION: 2.48.0
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ env.NAME }}
+      - name: Install nfpm
+        run: |
+          archive=nfpm_${NFPM_VERSION}_Linux_${{ matrix.nfpm }}.tar.gz
+          base=https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION
+          curl -fsSLO "$base/$archive" -O "$base/checksums.txt"
+          grep -F "  $archive" checksums.txt | sha256sum -c -
+          sudo tar -xzf "$archive" -C /usr/local/bin nfpm
+          rm "$archive" checksums.txt
+      - name: Package
+        run: |
+          tar -xzf "$NAME.tar.gz"
+          .github/scripts/linux-packages.sh "$VERSION" "$NAME" packages
+          ls -l packages
+      - name: Install on Debian, Ubuntu and Fedora
+        run: |
+          for image in debian:stable-slim ubuntu:22.04 ubuntu:latest; do
+            docker run --rm -v "$PWD:/w" -w /w "$image" \
+              .github/scripts/test-linux-package.sh packages/*.deb "$VERSION"
+          done
+          docker run --rm -v "$PWD:/w" -w /w fedora:latest \
+            .github/scripts/test-linux-package.sh packages/*.rpm "$VERSION"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.NAME }}-packages
+          path: packages/*
+          if-no-files-found: error
+
+  checksums:
+    needs: [version, build, linux-packages]
     runs-on: ubuntu-latest
     env:
       VERSION: ${{ needs.version.outputs.version }}
