@@ -4,15 +4,24 @@ Short-lived AWS credentials through IAM Identity Center (AWS SSO), as a single R
 stays byte-compatible with the AWS CLI and SDKs. One login gives you a profile for every account
 and role you can use, and a list to pick the default from. AWS only.
 
-> **Status: beta.** The package is `gac-redux`; the command it installs is `gac`. The native
-> path described below is ready to use; on-demand credentials (`env`, `exec`,
-> `credential-process`, `console`) come next. Please report problems in
-> [issues](https://github.com/virtualmadden/gac-redux/issues).
+> **Status: beta.** The package is `gac-redux`; the command it installs is `gac`. Everything
+> described below works today; flags and output may still change before 1.0. Please report
+> problems in [issues](https://github.com/virtualmadden/gac-redux/issues).
 
 ## Install
 
 ```console
 $ brew install virtualmadden/tap/gac-redux
+```
+
+On Debian, Ubuntu or Fedora (arm64 or x86_64), install the package from
+[releases](https://github.com/virtualmadden/gac-redux/releases), which puts the man pages and the
+bash, zsh and fish completions where the system looks for them. There is no package repository
+yet: to upgrade, install the next release's package the same way.
+
+```console
+$ sudo apt install ./gac-redux-0.5.0-amd64.deb
+$ sudo dnf install ./gac-redux-0.5.0-x86_64.rpm
 ```
 
 Or download the archive for your platform from
