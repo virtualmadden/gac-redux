@@ -277,7 +277,8 @@ jobs:
         run: |
           Invoke-Expression "& {$(Invoke-RestMethod https://get.scoop.sh)} -RunAsAdmin"
           $env:PATH = "$env:USERPROFILE\scoop\shims;$env:PATH"
-          scoop install dist/gac-redux.json
+          # A full path: Scoop reads `dist/gac-redux.json` as app `gac-redux.json` in bucket `dist`.
+          scoop install "$PWD\dist\gac-redux.json"
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           $version = gac --version
           if ($version -ne "gac-redux $env:VERSION") { throw "gac --version printed: $version" }
