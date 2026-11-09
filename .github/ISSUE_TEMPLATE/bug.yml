@@ -1,0 +1,53 @@
+name: Bug report
+description: Something gac does wrong, or a message that does not help.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For a security problem, report it privately from the Security tab instead (see SECURITY.md).
+        Leave out real tokens and credentials; redacted output is enough.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The command you ran, what it printed, and what you expected instead.
+      render: console
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: gac --version
+      placeholder: gac-redux 0.5.1
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installed with
+      options:
+        - Homebrew
+        - .deb or .rpm package
+        - Scoop
+        - winget
+        - Release archive
+        - cargo install
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: Operating system, version and architecture.
+      placeholder: macOS 26.1 arm64
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: gac doctor --json
+      description: It reports no secrets, but check it before posting.
+      render: json
+    validations:
+      required: true

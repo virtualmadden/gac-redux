@@ -2,8 +2,9 @@ name: Release
 
 # Pushing a tag vX.Y.Z (or vX.Y.Z-beta.N) that matches the version in Cargo.toml builds the
 # binaries and the Linux packages, publishes a GitHub release (a pre-release when the version has a
-# suffix), and updates the formula in virtualmadden/homebrew-tap. A pull request that changes the
-# release files runs everything up to publishing, so a broken release is caught before the tag.
+# suffix) with the notes in docs/release-notes/X.Y.Z.md, and updates the formula in
+# virtualmadden/homebrew-tap. A pull request that changes the release files runs everything up to
+# publishing, so a broken release is caught before the tag.
 
 on:
   push:
@@ -34,6 +35,10 @@ jobs:
           version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "gac-redux") | .version')
           if [ "$GITHUB_EVENT_NAME" = push ] && [ "v$version" != "$GITHUB_REF_NAME" ]; then
             echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+          if [ ! -s "docs/release-notes/$version.md" ]; then
+            echo "::error::docs/release-notes/$version.md is missing or empty"
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -224,7 +229,9 @@ jobs:
         run: |
           prerelease=()
           case "$VERSION" in *-*) prerelease=(--prerelease) ;; esac
-          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes \
+          # The notes written for users, then GitHub's list of the merged pull requests.
+          gh release create "$GITHUB_REF_NAME" --verify-tag \
+            --notes-file "docs/release-notes/$VERSION.md" --generate-notes \
             --title "gac-redux $VERSION" "${prerelease[@]}" dist/gac-redux-* dist/SHA256SUMS
 
   homebrew:
