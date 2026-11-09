@@ -101,7 +101,7 @@ $ aws s3 ls --profile payments-prod/ReadOnly
 | `gac login` | Signs in and writes the shared token cache. `--device-code`, `--pkce`, `--no-browser`, `--port N`, `-p PROFILE` |
 | `gac select` | Picks the account and role of the `[default]` profile from a list of every session's accounts and roles. `ACCOUNT/ROLE` picks without the list, `--clear` takes them out again, `--adopt` takes over a `[default]` you wrote, `--print` prints the chosen role's profile name instead of writing anything |
 | `gac logout` | Revokes the session (`sso:Logout`), deletes its token and, as `aws sso logout` does, every role credential the AWS CLI cached from SSO tokens. `--all` |
-| `gac status` | Sessions, token and registration expiry, sync blocks. No secrets. `--json` |
+| `gac status` | Sessions, token and registration expiry, sync blocks. No secrets. Refreshes an expired token, as the next AWS command would, to show whether the session still works. `--json` |
 | `gac sync` | Writes and prunes the managed block. `--mode sso\|process`, `--name TEMPLATE`, `--include`/`--exclude GLOB`, `--chain SOURCE=ROLE_ARN`, `--region`, `--reset`, `--refresh`, `--dry-run` |
 | `gac list` | Accounts and roles, from a one-hour inventory cache. `--json`, `--refresh` |
 | `gac whoami` | The account, role and region AWS tools use right now, which rule picked them (`--profile`, `AWS_PROFILE`, `[default]`), and how long the token and role credentials last. Reads only local files, so it suits a shell prompt. `-p PROFILE`, `--json` |
@@ -109,7 +109,7 @@ $ aws s3 ls --profile payments-prod/ReadOnly
 | `gac credential-process` | Prints a role's credentials as `credential_process` JSON. The profiles `gac sync --mode process` writes run it. `--session`, `--account-id`, `--role-name` |
 | `gac env` | Prints the variables `gac exec` sets as shell commands: `eval "$(gac env)"`. `--format sh\|fish\|powershell\|json`, `--unset` prints the commands that clear them, `--region` |
 | `gac console` | Opens the AWS console signed in as a role, through the AWS federation endpoint, without the access portal. Picks the role like `gac exec`. `--region`, `--destination s3/home` (or a console URL), `--print` prints the one-time sign-in link instead; over SSH it is printed |
-| `gac doctor` | Checks the AWS files and caches, each problem with a suggested fix. `--fix` applies the mechanical ones; a fix to lines you wrote shows its diff and asks first (`--yes` skips asking). `--json` |
+| `gac doctor` | Checks the AWS files and caches, each problem with a suggested fix. Refreshes an expired token, as `gac status` does. `--fix` applies the mechanical ones; a fix to lines you wrote shows its diff and asks first (`--yes` skips asking). `--json` |
 | `gac completions SHELL` | Prints a completion script for `bash`, `zsh`, `fish`, `powershell` or `elvish` |
 
 With more than one session configured, a command uses `--session NAME`, else the session of
@@ -176,11 +176,12 @@ it.
 
 ### Something is wrong with my AWS files. Where do I start?
 
-`gac doctor` checks the AWS config, the credentials file and the caches without changing anything,
-and suggests a fix for each problem it finds. `gac doctor --fix` applies the mechanical ones:
-private file modes, removing a gac block whose `[sso-session]` is gone, adding the scope that
-gets a session refresh tokens, and moving legacy profiles with an inline `sso_start_url` onto an
-`[sso-session]`. A fix to lines you wrote shows its diff and asks first.
+`gac doctor` checks the AWS config, the credentials file and the caches, and suggests a fix for
+each problem it finds. It changes nothing, except that it refreshes an expired SSO token as the
+next AWS command would, to find out whether the session still works. `gac doctor --fix` applies
+the mechanical ones: private file modes, removing a gac block whose `[sso-session]` is gone,
+adding the scope that gets a session refresh tokens, and moving legacy profiles with an inline
+`sso_start_url` onto an `[sso-session]`. A fix to lines you wrote shows its diff and asks first.
 
 ## Development
 

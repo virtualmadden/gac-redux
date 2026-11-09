@@ -227,6 +227,30 @@ pub async fn usable_token(store: &impl TokenStore, session: &Session) -> Result<
     }
 }
 
+/// Refreshes an expired token that has a refresh token, as its next use would, and returns the
+/// service's error when the refresh fails. Only the service knows whether the refresh token
+/// outlived the portal session it belongs to.
+pub async fn refresh_expired(store: &impl TokenStore, session: &Session) -> Result<()> {
+    let key = session.cache_key();
+    let due = |token: &CachedToken, now| {
+        token.state(now) == TokenState::Expired && token.is_refreshable(now)
+    };
+    let now = Timestamp::now();
+    if !store.load(key)?.is_some_and(|t| due(&t, now)) {
+        return Ok(());
+    }
+
+    let _lock = store.lock(key).await?;
+    let now = Timestamp::now();
+    let Some(token) = store.load(key)?.filter(|t| due(t, now)) else {
+        return Ok(());
+    };
+    let refreshed = refresh(session, &token, now).await?;
+    store.save(key, &refreshed)?;
+    tracing::debug!(expires_at = %refreshed.expires_at, "refreshed the SSO token");
+    Ok(())
+}
+
 fn load_token(store: &impl TokenStore, session: &Session) -> Result<CachedToken> {
     store
         .load(session.cache_key())?

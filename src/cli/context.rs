@@ -1,5 +1,6 @@
 //! What every command shares: the AWS paths, prompting rules, and session resolution.
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use jiff::{SignedDuration, Timestamp};
@@ -67,6 +68,22 @@ impl Context {
 
     pub fn token_store(&self) -> SsoCache {
         SsoCache::new(self.paths.sso_cache_dir())
+    }
+
+    /// Refreshes each session's expired token as its next use would, so a report can say whether
+    /// the session still works. Returns why a refresh failed, by session name.
+    pub async fn refresh_expired(&self, files: &AwsFiles) -> BTreeMap<String, String> {
+        let store = self.token_store();
+        let mut failures = BTreeMap::new();
+        for name in files.session_names() {
+            let Ok(config) = name.parse().and_then(|n| files.sso_session(&n)) else {
+                continue;
+            };
+            if let Err(err) = auth::refresh_expired(&store, &Session::from(config)).await {
+                failures.insert(name.to_owned(), err.to_string());
+            }
+        }
+        failures
     }
 
     /// A usable SSO token for `session`, refreshed if due. When it needs a login and gac may

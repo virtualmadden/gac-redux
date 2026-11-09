@@ -1,5 +1,7 @@
-//! `gac status`: sessions, token and registration expiry, and sync blocks. Never a secret.
+//! `gac status`: sessions, token and registration expiry, and sync blocks. Never a secret. It
+//! refreshes an expired token as its next use would, so it can say whether the session works.
 
+use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
 use jiff::{SignedDuration, Timestamp};
@@ -59,6 +61,9 @@ pub struct TokenStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
     pub refreshable: bool,
+    /// The service's error when gac tried to refresh the expired token and failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub registration_expires_at: Option<String>,
 }
@@ -83,13 +88,14 @@ pub async fn run(ctx: &Context, args: StatusArgs) -> Result<()> {
         ui::warn(format!("ignoring sync blocks: {err} (see gac doctor)"));
         Vec::new()
     });
+    let refresh_failures = ctx.refresh_expired(&files).await;
     let store = ctx.token_store();
     let now = Timestamp::now();
 
     let mut sessions: Vec<SessionStatus> = files
         .session_names()
         .into_iter()
-        .map(|name| named_status(&files, &store, &blocks, name, now))
+        .map(|name| named_status(&files, &store, &blocks, &refresh_failures, name, now))
         .collect();
     sessions.extend(files.legacy_sso_profiles().into_iter().map(|legacy| {
         let session = Session::from(legacy.clone());
@@ -124,6 +130,7 @@ fn named_status(
     files: &AwsFiles,
     store: &impl TokenStore,
     blocks: &[Block],
+    refresh_failures: &BTreeMap<String, String>,
     name: &str,
     now: Timestamp,
 ) -> SessionStatus {
@@ -141,6 +148,11 @@ fn named_status(
     match name.parse().and_then(|n| files.sso_session(&n)) {
         Ok(config) => {
             let session = Session::from(config);
+            let mut token = token_status(store, &session, now);
+            if let Some(err) = refresh_failures.get(name) {
+                token.refreshable = false;
+                token.refresh_error = Some(err.clone());
+            }
             SessionStatus {
                 name: name.to_owned(),
                 kind: "sso-session",
@@ -148,7 +160,7 @@ fn named_status(
                 start_url: Some(session.start_url.to_string()),
                 region: Some(session.region.to_string()),
                 error: None,
-                token: token_status(store, &session, now),
+                token,
                 sync_block,
             }
         }
@@ -163,6 +175,7 @@ fn named_status(
                 state: "missing",
                 expires_at: None,
                 refreshable: false,
+                refresh_error: None,
                 registration_expires_at: None,
             },
             sync_block,
@@ -181,18 +194,21 @@ pub fn token_status(store: &impl TokenStore, session: &Session, now: Timestamp) 
             },
             expires_at: Some(timestamp::format(token.expires_at)),
             refreshable: token.is_refreshable(now),
+            refresh_error: None,
             registration_expires_at: token.registration_expires_at.map(timestamp::format),
         },
         Ok(None) => TokenStatus {
             state: "missing",
             expires_at: None,
             refreshable: false,
+            refresh_error: None,
             registration_expires_at: None,
         },
         Err(_) => TokenStatus {
             state: "unreadable",
             expires_at: None,
             refreshable: false,
+            refresh_error: None,
             registration_expires_at: None,
         },
     }
@@ -288,6 +304,9 @@ pub fn describe_token(token: &TokenStatus, now: Timestamp) -> String {
         ""
     };
     match (token.state, left) {
+        ("expired", _) if let Some(err) = &token.refresh_error => {
+            format!("expired at {expires_at} and could not be refreshed: {err}")
+        }
         // Only the service knows whether the refresh token outlived the portal session.
         ("expired", _) if token.refreshable => {
             format!("expired at {expires_at}; the next use tries a refresh")
