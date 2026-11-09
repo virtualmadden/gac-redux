@@ -39,7 +39,8 @@ To try a change against a real Identity Center without touching your own AWS fil
   `main`.
 - CI runs fmt, clippy, the tests on Linux, macOS and Windows (x64 and arm64), the minimum Rust
   version and cargo-deny; all of them must pass. A change to documentation alone (the Markdown
-  files at the top level, `docs/` and the issue forms) skips them.
+  files at the top level, `docs/` and the issue forms) skips them. The final `ci` check sums up
+  the rest: it fails when any job fails or is cancelled.
 - Output is part of the interface: messages say what happened and what to do next, and a change
   to `--json` output only adds fields.
 
