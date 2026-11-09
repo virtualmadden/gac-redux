@@ -303,10 +303,10 @@ pub fn describe_token(token: &TokenStatus, now: Timestamp) -> String {
     } else {
         ""
     };
+    if let Some(err) = &token.refresh_error {
+        return format!("expired at {expires_at} and could not be refreshed: {err}");
+    }
     match (token.state, left) {
-        ("expired", _) if let Some(err) = &token.refresh_error => {
-            format!("expired at {expires_at} and could not be refreshed: {err}")
-        }
         // Only the service knows whether the refresh token outlived the portal session.
         ("expired", _) if token.refreshable => {
             format!("expired at {expires_at}; the next use tries a refresh")
