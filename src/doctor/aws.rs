@@ -1,6 +1,7 @@
 //! The AWS checks behind `gac doctor`. They only read; what `--fix` can repair they hand back as
 //! [`Action`]s.
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -21,6 +22,10 @@ pub struct Inputs<'a> {
     pub home_var: Option<OsString>,
     pub userprofile_var: Option<OsString>,
     pub now: Timestamp,
+    /// The service's error when the refresh of an expired token failed, by session name. The
+    /// caller tries the refresh first, since only the service knows whether the refresh token
+    /// still works.
+    pub refresh_failures: &'a BTreeMap<String, String>,
 }
 
 /// The report, and the actions that repair the findings marked fixable.
@@ -214,13 +219,23 @@ fn check_sessions(
                     ),
                     login,
                 ),
-                TokenState::Expired => report.ok(
-                    "sessions",
-                    format!(
-                        "session `{name}`: the token expired at {}; the next use tries to refresh it",
-                        token.expires_at
+                TokenState::Expired => match inputs.refresh_failures.get(name) {
+                    Some(err) => report.warn(
+                        "sessions",
+                        format!(
+                            "session `{name}`: the token expired at {} and could not be refreshed: {err}",
+                            token.expires_at
+                        ),
+                        login,
                     ),
-                ),
+                    None => report.ok(
+                        "sessions",
+                        format!(
+                            "session `{name}`: the token expired at {}; the next use tries to refresh it",
+                            token.expires_at
+                        ),
+                    ),
+                },
                 TokenState::RefreshDue => report.ok(
                     "sessions",
                     format!("session `{name}`: the token refreshes on next use"),
@@ -378,6 +393,7 @@ sso_region = us-east-1
             home_var: None,
             userprofile_var: None,
             now: Timestamp::now(),
+            refresh_failures: &BTreeMap::new(),
         });
         let level_of = |check: &str, needle: &str| {
             report
@@ -438,6 +454,7 @@ sso_region = us-east-1
             home_var: Some("/a".into()),
             userprofile_var: Some("/b".into()),
             now: Timestamp::now(),
+            refresh_failures: &BTreeMap::new(),
         })
         .report;
         assert_eq!(report.findings[0].check, "home");

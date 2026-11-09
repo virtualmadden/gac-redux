@@ -922,6 +922,7 @@ fn an_expired_token_without_refresh_requires_login() {
 #[test]
 fn an_expired_token_whose_refresh_is_rejected_is_not_promised_a_refresh() {
     let sandbox = Sandbox::with_session();
+    role_profiles_config(&sandbox);
     login_device(&sandbox);
     // The portal session ended: the cache still has a refresh token, but the service rejects it.
     let mut token = sandbox.token("corp");
@@ -929,26 +930,51 @@ fn an_expired_token_whose_refresh_is_rejected_is_not_promised_a_refresh() {
     token["refreshToken"] = json!("FAKE-ENDED");
     sandbox.write_token("corp", &token);
 
+    // whoami reads only local files, so it suits a shell prompt: it states what the next use does.
     sandbox
         .gac()
-        .arg("status")
+        .arg("whoami")
         .assert()
         .success()
         .stdout(predicate::str::contains(
             "expired at 2020-01-01T00:00:00Z; the next use tries a refresh",
-        ))
-        .stdout(predicate::str::contains("refreshable").not());
-    sandbox
-        .gac()
-        .arg("doctor")
-        .assert()
-        .stdout(predicate::str::contains(
-            "the token expired at 2020-01-01T00:00:00Z; the next use tries to refresh it",
         ));
+    assert_eq!(sandbox.mock.counter("refresh_rejected"), 0);
+
+    // status and doctor try the refresh, so they report what the next use will find.
+    let output = sandbox.gac().arg("status").assert().success();
+    let out = stdout(output.get_output());
+    assert_eq!(sandbox.mock.counter("refresh_rejected"), 1);
+    assert!(
+        out.contains("expired at 2020-01-01T00:00:00Z and could not be refreshed: CreateToken failed: InvalidGrantException"),
+        "{out}"
+    );
+    assert!(!out.contains("tries a refresh"), "{out}");
+    let output = sandbox.gac().args(["status", "--json"]).assert().success();
+    let json: Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let token_json = &json["sessions"][0]["token"];
+    assert_eq!(token_json["state"], "expired");
+    assert_eq!(token_json["refreshable"], false);
+    assert!(
+        token_json["refreshError"]
+            .as_str()
+            .unwrap()
+            .contains("InvalidGrantException"),
+        "{token_json}"
+    );
+
+    let output = sandbox.gac().arg("doctor").assert().success();
+    let out = stdout(output.get_output());
+    assert!(
+        out.contains("[warn] sessions: session `corp`: the token expired at 2020-01-01T00:00:00Z and could not be refreshed: CreateToken failed: InvalidGrantException"),
+        "{out}"
+    );
+    assert!(out.contains("fix: run `gac login --session corp`"), "{out}");
+    assert!(!out.contains("tries to refresh"), "{out}");
 
     let output = sandbox.gac().arg("list").assert().code(3);
     let err = stderr(output.get_output());
-    assert_eq!(sandbox.mock.counter("refresh_rejected"), 1);
+    assert_eq!(sandbox.mock.counter("refresh_rejected"), 4);
     // At the default width of 80 the timestamp lands on the wrap point; it must stay whole.
     assert!(err.contains("2020-01-01T00:00:00Z"), "{err}");
     assert!(err.contains("could not be refreshed"), "{err}");
@@ -958,6 +984,29 @@ fn an_expired_token_whose_refresh_is_rejected_is_not_promised_a_refresh() {
         !err.contains("WARN"),
         "the reason is in the error, not a separate log line: {err}"
     );
+}
+
+#[test]
+fn status_and_doctor_refresh_an_expired_token_the_service_still_accepts() {
+    for command in ["status", "doctor"] {
+        let sandbox = Sandbox::with_session();
+        login_device(&sandbox);
+        let mut token = sandbox.token("corp");
+        token["expiresAt"] = json!("2020-01-01T00:00:00Z");
+        sandbox.write_token("corp", &token);
+
+        let output = sandbox.gac().arg(command).assert().success();
+        let out = stdout(output.get_output());
+        assert_eq!(sandbox.mock.counter("refresh"), 1, "{command}");
+        let expected = match command {
+            "status" => "token         valid until",
+            _ => "[ok] sessions: session `corp`: logged in until",
+        };
+        assert!(out.contains(expected), "{command}: {out}");
+        let after = sandbox.token("corp");
+        assert_ne!(after["accessToken"], token["accessToken"], "{command}");
+        assert_ne!(after["expiresAt"], token["expiresAt"], "{command}");
+    }
 }
 
 #[test]

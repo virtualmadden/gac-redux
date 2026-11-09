@@ -1,6 +1,8 @@
 //! `gac doctor`: checks with a suggested fix for each, and with `--fix`, the fixes that are
 //! mechanical. A fix that edits lines the user wrote shows its diff and asks first.
 
+use std::collections::BTreeMap;
+
 use jiff::Timestamp;
 use serde::Serialize;
 
@@ -53,12 +55,17 @@ pub async fn run(ctx: &Context, args: DoctorArgs) -> Result<()> {
 /// The checks, and the snapshot of the AWS files they ran on.
 async fn diagnose(ctx: &Context) -> (Diagnosis, Result<AwsFiles>) {
     let files = ctx.files().await;
+    let refresh_failures = match &files {
+        Ok(files) => ctx.refresh_expired(files).await,
+        Err(_) => BTreeMap::new(),
+    };
     let diagnosis = aws::run(&Inputs {
         paths: &ctx.paths,
         files: files.as_ref().map_err(ToString::to_string),
         home_var: std::env::var_os("HOME"),
         userprofile_var: std::env::var_os("USERPROFILE"),
         now: Timestamp::now(),
+        refresh_failures: &refresh_failures,
     });
     (diagnosis, files)
 }
