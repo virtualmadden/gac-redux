@@ -8,12 +8,12 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request cancels its older run. Runs on main all finish: a push of
-# documentation alone skips the build, so cancelling the run before it could leave a code change
-# on main that was never built there.
+# A new push to a pull request cancels its older run. Each push to main gets a group of its own,
+# so its run is never cancelled or replaced: a push of documentation alone skips the build, and
+# losing the run before it would leave a code change on main that was never built there.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
