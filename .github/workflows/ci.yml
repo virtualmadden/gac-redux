@@ -123,3 +123,22 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
+
+  # The one check to require before merging. It passes when every job above passed, or was
+  # skipped for a documentation-only change, and its name never depends on a matrix (a skipped
+  # matrix job reports as `test (${{ matrix.os }})`, not once per OS).
+  ci:
+    if: always()
+    needs: [changes, fmt, clippy, test, release-notes, msrv, deny]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for result in $RESULTS; do
+            case "$result" in
+              success | skipped) ;;
+              *) echo "::error::a CI job ended with: $result"; exit 1 ;;
+            esac
+          done
