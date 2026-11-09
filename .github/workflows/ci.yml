@@ -18,6 +18,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Backtraces need only file and line; full debug info would make the builds slower to link.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   # Whether the change touches anything beyond the documentation. A change to documentation
@@ -69,6 +71,10 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Pull requests restore main's cache without saving their own copy, which keeps the
+          # repository under GitHub's 10 GB cache limit.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --locked --all-targets -- -D warnings
 
   test:
@@ -87,6 +93,10 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Pull requests restore main's cache without saving their own copy, which keeps the
+          # repository under GitHub's 10 GB cache limit.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@v2
         with:
           tool: nextest
@@ -115,6 +125,10 @@ jobs:
         with:
           toolchain: "1.94.1"
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Pull requests restore main's cache without saving their own copy, which keeps the
+          # repository under GitHub's 10 GB cache limit.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --locked
 
   deny:
