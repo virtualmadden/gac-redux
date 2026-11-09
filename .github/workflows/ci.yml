@@ -17,7 +17,32 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # Whether the change touches anything beyond the documentation. A change to documentation
+  # alone skips the jobs that build and test gac; a skipped job counts as passing, so this keeps
+  # working when checks are required.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          docs='^(README\.md|CONTRIBUTING\.md|SECURITY\.md|CODE_OF_CONDUCT\.md|LICENSE-[A-Z]+|docs/.*|\.github/ISSUE_TEMPLATE/.*)$'
+          code=true
+          if [ -n "$BASE" ] && git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            changed=$(git diff --name-only "$BASE" HEAD)
+            grep -qvE "$docs" <<< "$changed" || code=false
+          fi
+          echo "code=$code" | tee -a "$GITHUB_OUTPUT"
+
   fmt:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -27,6 +52,8 @@ jobs:
       - run: cargo fmt --check
 
   clippy:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: clippy (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -42,6 +69,8 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
 
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     name: test (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -74,6 +103,8 @@ jobs:
           fi
 
   msrv:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -84,6 +115,8 @@ jobs:
       - run: cargo check --locked
 
   deny:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
