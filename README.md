@@ -151,6 +151,15 @@ Yes. `gac` writes the same token cache and the same native `sso-session` profile
 does, so `aws sso login`, `aws sso logout`, the AWS CLI and every SDK that supports Identity
 Center share one login, and you can stop using `gac` at any time without breaking a profile.
 
+### Does it work with Okta, Microsoft Entra ID or Google Workspace?
+
+Yes, when that provider is the identity source of IAM Identity Center. `gac` talks only to Identity
+Center, which sends you to your provider to sign in, so its sign-in page and MFA (Okta Verify, for
+example) run in the browser as usual, and nothing in `gac` changes. To set it up, choose an
+external identity provider as the identity source in the Identity Center console, connected over
+SAML 2.0 and, for users and groups, SCIM. A provider federated straight to IAM roles through SAML,
+without Identity Center, is not supported.
+
 ### Can I assume another role from an SSO role?
 
 Yes. `gac sync --chain '*/Admin=arn:aws:iam::{account_id}:role/Deploy'` adds, for every synced
