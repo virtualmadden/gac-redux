@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        For a security problem, report it privately from the Security tab instead (see SECURITY.md).
+        For a security problem, [report it privately](https://github.com/virtualmadden/gac-redux/security/advisories/new) instead (see the [security policy](https://github.com/virtualmadden/gac-redux/security/policy)).
         Leave out real tokens and credentials; redacted output is enough.
   - type: textarea
     id: what-happened
