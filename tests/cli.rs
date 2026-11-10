@@ -873,6 +873,10 @@ fn the_fan_out_survives_portal_throttling() {
             .iter()
             .all(|a| a["roles"].as_array().unwrap().len() == 2)
     );
+    assert!(
+        sandbox.mock.counter("throttled") > 0,
+        "the portal throttled the fan-out"
+    );
 }
 
 #[test]
