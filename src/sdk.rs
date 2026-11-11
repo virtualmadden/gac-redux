@@ -6,8 +6,8 @@ use aws_config::{AppName, BehaviorVersion, SdkConfig};
 
 use crate::domain::Region;
 
-/// SDK settings for the unsigned Identity Center APIs in `region`. Adaptive retry was the only
-/// setup that stayed robust when the portal throttles a fan-out.
+/// SDK settings for the unsigned Identity Center APIs in `region`, with adaptive retry. The portal
+/// client tunes it further for its throttled fan-out (`portal::client_config`).
 pub async fn load(region: &Region) -> SdkConfig {
     aws_config::defaults(BehaviorVersion::latest())
         .app_name(AppName::new("gac-redux").expect("a valid app name"))
