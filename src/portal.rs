@@ -1,8 +1,10 @@
 //! The IAM Identity Center portal API (`sso`): accounts, roles, role credentials and logout.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use aws_sdk_sso::Client;
+use aws_sdk_sso::config::retry::{RetryConfig, RetryPartition, TokenBucket};
 use aws_sdk_sso::error::{ProvideErrorMetadata, SdkError};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -18,6 +20,16 @@ use crate::secret::{ExposeSecret, SecretString};
 /// Concurrent `ListAccountRoles` calls during a full listing. With adaptive retry, 4-8 stayed
 /// robust under throttling; more only queues behind the client-side rate limiter.
 const FAN_OUT: usize = 8;
+
+/// Attempts per portal call. At one request a second against the fan-out, 10 attempts left some
+/// `ListAccountRoles` calls out of retries, which failed the whole listing; 20 finished it.
+const MAX_ATTEMPTS: u32 = 20;
+
+/// The longest wait before a retry. Adaptive retry's client-side rate limiter can ask for many
+/// seconds after a throttle, and the SDK's 20 s cap stalled every throttled listing by about 20 s.
+/// 1 s keeps a listing close to the rate the portal allows; 2 s was as fast under moderate
+/// throttling and slower, with several times the throttled requests, under heavy throttling.
+const MAX_BACKOFF: Duration = Duration::from_secs(1);
 
 /// One account and the roles the user has in it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,8 +52,9 @@ pub struct Portal {
 
 impl Portal {
     pub async fn new(session: &Session) -> Self {
+        let sdk = crate::sdk::load(&session.region).await;
         Self {
-            client: Client::new(&crate::sdk::load(&session.region).await),
+            client: Client::from_conf(client_config(&sdk).build()),
             session: session.clone(),
         }
     }
@@ -184,6 +197,25 @@ type RolesError = SdkError<
     aws_sdk_sso::config::http::HttpResponse,
 >;
 
+/// Portal client settings: adaptive retry tuned for a throttled fan-out, in its own retry
+/// partition where a throttled retry costs nothing. The SDK's shared retry budget (500 tokens, 5
+/// per retry) otherwise stops all retries after about 100 throttles in one process, so a large
+/// listing under sustained throttling failed however many attempts each call had. Adaptive retry
+/// already paces throttled calls, and other errors still draw on the budget, so an outage does not
+/// turn into a retry storm.
+fn client_config(sdk: &aws_config::SdkConfig) -> aws_sdk_sso::config::Builder {
+    let partition = RetryPartition::custom("gac-portal")
+        .token_bucket(TokenBucket::builder().throttling_retry_cost(0).build())
+        .build();
+    aws_sdk_sso::config::Builder::from(sdk)
+        .retry_config(
+            RetryConfig::adaptive()
+                .with_max_attempts(MAX_ATTEMPTS)
+                .with_max_backoff(MAX_BACKOFF),
+        )
+        .retry_partition(partition)
+}
+
 async fn list_roles(
     client: &Client,
     token: &SecretString,
@@ -206,4 +238,74 @@ async fn list_roles(
         .collect();
     roles.sort();
     Ok(roles)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use aws_config::{BehaviorVersion, Region, SdkConfig};
+    use aws_sdk_sso::config::http::{HttpRequest, HttpResponse};
+    use aws_smithy_async::test_util::instant_time_and_sleep;
+    use aws_smithy_runtime_api::client::http::{
+        HttpConnector, HttpConnectorFuture, SharedHttpConnector, http_client_fn,
+    };
+    use aws_smithy_runtime_api::http::StatusCode;
+    use aws_smithy_types::body::SdkBody;
+
+    use super::*;
+
+    /// A portal that throttles every call six times before answering it.
+    #[derive(Debug, Clone)]
+    struct ThrottlingPortal(Arc<AtomicU32>);
+
+    impl HttpConnector for ThrottlingPortal {
+        fn call(&self, _request: HttpRequest) -> HttpConnectorFuture {
+            let throttled = self.0.fetch_add(1, Ordering::SeqCst) % 7 < 6;
+            let (status, body) = if throttled {
+                (429, r#"{"message":"throttled"}"#)
+            } else {
+                (
+                    200,
+                    r#"{"roleList":[{"roleName":"Admin","accountId":"111122223333"}]}"#,
+                )
+            };
+            let mut response =
+                HttpResponse::new(StatusCode::try_from(status).unwrap(), SdkBody::from(body));
+            if throttled {
+                response
+                    .headers_mut()
+                    .insert("x-amzn-errortype", "TooManyRequestsException");
+            }
+            HttpConnectorFuture::ready(Ok(response))
+        }
+    }
+
+    /// 30 calls throttled 6 times each make 180 throttled retries, beyond the roughly 100 the SDK's
+    /// shared retry budget allows a process. A manual clock makes backoff and pacing instant.
+    #[tokio::test]
+    async fn sustained_throttling_does_not_exhaust_retries() {
+        let requests = Arc::new(AtomicU32::new(0));
+        let portal = ThrottlingPortal(Arc::clone(&requests));
+        let (time, sleep) = instant_time_and_sleep(std::time::UNIX_EPOCH);
+        let sdk = SdkConfig::builder()
+            .behavior_version(BehaviorVersion::latest())
+            .region(Region::new("us-east-1"))
+            .http_client(http_client_fn(move |_, _| {
+                SharedHttpConnector::new(portal.clone())
+            }))
+            .time_source(time)
+            .sleep_impl(sleep)
+            .build();
+        let client = Client::from_conf(client_config(&sdk).build());
+        let token = SecretString::from("token".to_owned());
+        let account: AccountId = "111122223333".parse().unwrap();
+        for call in 0..30 {
+            let roles = list_roles(&client, &token, &account)
+                .await
+                .unwrap_or_else(|err| panic!("call {call} failed: {err:?}"));
+            assert_eq!(roles, ["Admin".parse::<RoleName>().unwrap()]);
+        }
+        assert_eq!(requests.load(Ordering::SeqCst), 30 * 7);
+    }
 }

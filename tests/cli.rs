@@ -846,9 +846,8 @@ fn the_inventory_cache_is_bound_to_the_token_that_listed_it() {
     assert_eq!(sandbox.mock.counter("accounts"), 2);
 }
 
-/// The slowest test, about 20s: after a few throttles the SDK's adaptive retry slows its own
-/// request rate and recovers gradually. Standard retry with more attempts was faster on
-/// average but erratic, and sent several times the throttled requests.
+/// About 6 s: 25 portal calls against a limit of 6 a second, which throttles the fan-out of 8.
+/// `src/portal.rs` covers throttling heavy enough to exhaust the SDK's retry budget.
 #[test]
 fn the_fan_out_survives_portal_throttling() {
     let accounts: Vec<_> = (0..24)
@@ -864,7 +863,9 @@ fn the_fan_out_survives_portal_throttling() {
     sandbox.write_config(SESSION);
     login_device(&sandbox);
     sandbox.mock.set_rate_limit(6);
+    let start = std::time::Instant::now();
     let listed = sandbox.gac().args(["list", "--json"]).assert().success();
+    let elapsed = start.elapsed();
     let json: Value = serde_json::from_slice(&listed.get_output().stdout).unwrap();
     let accounts = json["accounts"].as_array().unwrap();
     assert_eq!(accounts.len(), 24);
@@ -876,6 +877,12 @@ fn the_fan_out_survives_portal_throttling() {
     assert!(
         sandbox.mock.counter("throttled") > 0,
         "the portal throttled the fan-out"
+    );
+    // 25 calls at 6 a second take about 4 s, and the listing about 6 s. With the SDK's 20 s
+    // maximum backoff, adaptive retry stalled it to about 20 s.
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "the throttled listing took {elapsed:?}"
     );
 }
 
