@@ -1,6 +1,6 @@
 [package]
 name = "gac-redux"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 rust-version = "1.94.1" # MSRV of the AWS SDK crates; std File::lock needs 1.89
 description = "Short-lived AWS credentials through IAM Identity Center, interoperable with the AWS CLI and SDKs"
