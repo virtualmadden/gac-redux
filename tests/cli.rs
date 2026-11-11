@@ -39,13 +39,14 @@ fn login_pkce(sandbox: &Sandbox, extra: &[&str]) -> std::process::Output {
 #[test]
 fn bare_command_prints_help() {
     let sandbox = Sandbox::new();
-    sandbox
-        .gac()
-        .assert()
-        .code(2)
-        .stderr(predicate::str::contains("Usage: gac"));
     let help = sandbox.gac().arg("--help").assert().success();
-    insta::assert_snapshot!(String::from_utf8_lossy(&help.get_output().stdout));
+    let help = String::from_utf8_lossy(&help.get_output().stdout).into_owned();
+    insta::assert_snapshot!(help);
+    // Bare `gac` asks for help, so it prints `gac -h` and exits 0; winget's validation runs it
+    // that way.
+    let short = sandbox.gac().arg("-h").assert().success();
+    let short = String::from_utf8_lossy(&short.get_output().stdout).into_owned();
+    sandbox.gac().assert().success().stdout(short).stderr("");
 }
 
 #[test]

@@ -363,10 +363,22 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
+    let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
     let mut cmd = Cli::command();
-    let matches = cmd
-        .try_get_matches_from_mut(args)
-        .unwrap_or_else(|err| err.exit());
+    let matches = match cmd.try_get_matches_from_mut(&args) {
+        Ok(matches) => matches,
+        // Bare `gac` asks for help rather than misusing a command, so it prints the help to
+        // stdout and exits 0, as `gac --help` does.
+        Err(err)
+            if args.len() <= 1
+                && err.kind() == ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand =>
+        {
+            return cmd
+                .print_help()
+                .map_err(|err| Error::io("could not print the help", err));
+        }
+        Err(err) => err.exit(),
+    };
     let mut cli = Cli::from_arg_matches(&matches).unwrap_or_else(|err| err.format(&mut cmd).exit());
     if matches.value_source("session") != Some(ValueSource::CommandLine) {
         cli.session = None;
