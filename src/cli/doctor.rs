@@ -66,6 +66,11 @@ async fn diagnose(ctx: &Context) -> (Diagnosis, Result<AwsFiles>) {
         userprofile_var: std::env::var_os("USERPROFILE"),
         now: Timestamp::now(),
         refresh_failures: &refresh_failures,
+        old_vars: aws::RENAMED_VARS
+            .iter()
+            .map(|(old, _)| *old)
+            .filter(|old| std::env::var_os(old).is_some_and(|v| !v.is_empty()))
+            .collect(),
     });
     (diagnosis, files)
 }

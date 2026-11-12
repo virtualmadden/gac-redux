@@ -25,6 +25,8 @@ const END: &str = "# END gac-redux sync ";
 /// The markers of blocks written before the project was renamed.
 const LEGACY_BEGIN: &str = "# BEGIN gac sync ";
 const LEGACY_END: &str = "# END gac sync ";
+const LEGACY_NOTICE: &str =
+    "# Managed by gac: edits inside this block are replaced on the next sync.";
 pub const NOTICE: &str =
     "# Managed by gac-redux: edits inside this block are replaced on the next sync.";
 
@@ -80,6 +82,8 @@ pub struct Block {
     /// Byte range from the start of the BEGIN line through the END line's line ending.
     pub range: Range<usize>,
     pub header: Header,
+    /// It has the markers from before the rename.
+    pub legacy: bool,
 }
 
 impl Block {
@@ -116,13 +120,14 @@ pub enum MarkerError {
 /// Finds every block in `content`.
 pub fn scan(content: &str) -> Result<Vec<Block>, MarkerError> {
     let mut blocks: Vec<Block> = Vec::new();
-    let mut open: Option<(usize, usize, Header)> = None; // (start offset, line number, header)
+    // (start offset, line number, header, legacy markers)
+    let mut open: Option<(usize, usize, Header, bool)> = None;
     let mut offset = 0;
     for (index, raw) in content.split_inclusive('\n').enumerate() {
         let line_no = index + 1;
         let line = raw.trim_end_matches(['\n', '\r']);
         if let Some(rest) = strip_marker(line, BEGIN, LEGACY_BEGIN) {
-            if let Some((_, open_line, _)) = &open {
+            if let Some((_, open_line, _, _)) = &open {
                 return Err(MarkerError::Nested {
                     line: line_no,
                     open: *open_line,
@@ -135,9 +140,9 @@ pub fn scan(content: &str) -> Result<Vec<Block>, MarkerError> {
                     session: header.session,
                 });
             }
-            open = Some((offset, line_no, header));
+            open = Some((offset, line_no, header, line.starts_with(LEGACY_BEGIN)));
         } else if let Some(rest) = strip_marker(line, END, LEGACY_END) {
-            let Some((start, _, header)) = open.take() else {
+            let Some((start, _, header, legacy)) = open.take() else {
                 return Err(MarkerError::StrayEnd { line: line_no });
             };
             let found = rest
@@ -155,11 +160,12 @@ pub fn scan(content: &str) -> Result<Vec<Block>, MarkerError> {
             blocks.push(Block {
                 range: start..offset + raw.len(),
                 header,
+                legacy,
             });
         }
         offset += raw.len();
     }
-    if let Some((_, line, header)) = open {
+    if let Some((_, line, header, _)) = open {
         return Err(MarkerError::Unterminated {
             line,
             session: header.session,
@@ -244,6 +250,28 @@ pub fn append(content: &str, text: &str) -> String {
         }
     }
     out.push_str(text);
+    out
+}
+
+/// Gives a block from before the rename the current markers and notice, leaving its profiles
+/// and the rest of the file byte for byte.
+pub fn with_current_markers(content: &str, block: &Block) -> String {
+    let lines: Vec<&str> = content[block.range.clone()].split_inclusive('\n').collect();
+    let mut out = content[..block.range.start].to_owned();
+    for (index, raw) in lines.iter().enumerate() {
+        let line = raw.trim_end_matches(['\n', '\r']);
+        if index == 0 {
+            out.push_str(&block.header.begin_line());
+        } else if index == lines.len() - 1 {
+            out.push_str(&block.header.end_line());
+        } else if line == LEGACY_NOTICE {
+            out.push_str(NOTICE);
+        } else {
+            out.push_str(line);
+        }
+        out.push_str(&raw[line.len()..]);
+    }
+    out.push_str(&content[block.range.end..]);
     out
 }
 
@@ -390,6 +418,27 @@ mod tests {
             out,
             format!("{user}{}[profile after]\n", block("corp", &["new"], "\n"))
         );
+    }
+
+    #[test]
+    fn gives_a_legacy_block_the_current_markers_in_place() {
+        let user = "[profile mine]\r\nregion = us-east-1\r\n\r\n";
+        let legacy = "# BEGIN gac sync session=corp mode=sso name={account}/{role}\r\n\
+                      # Managed by gac: edits inside this block are replaced on the next sync.\r\n\
+                      [profile old]\r\n\
+                      # END gac sync session=corp\r\n";
+        let content = format!("{user}{legacy}[profile after]\r\n");
+        let blocks = scan(&content).unwrap();
+        assert!(blocks[0].legacy);
+        let out = with_current_markers(&content, &blocks[0]);
+        assert_eq!(
+            out,
+            format!(
+                "{user}{}[profile after]\r\n",
+                block("corp", &["[profile old]"], "\r\n")
+            )
+        );
+        assert!(!scan(&out).unwrap()[0].legacy);
     }
 
     /// Arbitrary user-owned config text: any lines that are not gac markers.
