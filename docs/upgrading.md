@@ -30,4 +30,4 @@ None of these needs a change on your side, but a script may notice them.
 | 0.4.0 | At a terminal, a command that needs a login offers to sign in instead of exiting with code `3`. Without a terminal, with `--no-input`, and always in `gac credential-process`, it still exits with `3`. |
 | 0.5.1 | `gac status` and `gac doctor` try to refresh an expired token, as the next AWS command would, so they can reach the network. When the refresh fails, `token.refreshable` is `false` and `token.refreshError` has the service's error. |
 | 0.5.2 | `gac` with no arguments prints its help to stdout and exits with `0`. It printed to stderr and exited with `2` before. |
-| Unreleased | `fetchedAt` in `gac list --json` has no fractional seconds, like every other timestamp. `gac sync --remove` deletes a sync block, and `gac doctor` gained the `older-release` check. |
+| 0.6.0 | `fetchedAt` in `gac list --json` has no fractional seconds, like every other timestamp. `gac sync --remove` deletes a sync block, and `gac doctor` gained the `older-release` check. |
