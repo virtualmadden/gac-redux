@@ -7,7 +7,7 @@ use serde::Serialize;
 use crate::auth::botocore_json::timestamp;
 use crate::cli::ListArgs;
 use crate::cli::context::Context;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::portal::Account;
 use crate::ui;
 
@@ -29,14 +29,11 @@ pub async fn run(ctx: &Context, args: ListArgs) -> Result<()> {
             fetched_at: timestamp::format(snapshot.fetched_at),
             accounts: &snapshot.items,
         };
-        let mut json =
-            serde_json::to_string_pretty(&listing).expect("serializing plain data cannot fail");
-        json.push('\n');
-        json
+        ui::json(&listing)
     } else {
         table(&snapshot.items)
     };
-    ui::output(text).map_err(|err| Error::io("could not write to stdout", err))
+    ui::output(text)
 }
 
 fn table(accounts: &[Account]) -> String {

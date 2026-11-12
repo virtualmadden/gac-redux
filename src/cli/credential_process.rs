@@ -51,5 +51,5 @@ pub async fn run(ctx: &Context, args: CredentialProcessArgs) -> Result<()> {
     };
     let mut json = serde_json::to_string(&output).expect("serializing plain data cannot fail");
     json.push('\n');
-    ui::output(json).map_err(|err| Error::io("could not write to stdout", err))
+    ui::output(json)
 }

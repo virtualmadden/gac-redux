@@ -4,7 +4,7 @@ use crate::cli::ConsoleArgs;
 use crate::cli::context::Context;
 use crate::cli::target;
 use crate::domain::Region;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::federation::{self, SigninError};
 use crate::partition::Partition;
 use crate::secret::ExposeSecret;
@@ -44,8 +44,7 @@ pub async fn run(ctx: &Context, args: ConsoleArgs) -> Result<()> {
     let url = url.expose_secret();
 
     if args.print {
-        return ui::output(format!("{url}\n"))
-            .map_err(|err| Error::io("could not write to stdout", err));
+        return ui::output(format!("{url}\n"));
     }
     let over_ssh = ["SSH_CONNECTION", "SSH_TTY"]
         .iter()

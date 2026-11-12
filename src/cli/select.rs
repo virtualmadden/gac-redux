@@ -109,7 +109,7 @@ async fn print(ctx: &Context, files: &AwsFiles, args: &SelectArgs) -> Result<()>
             chosen.label()
         )));
     };
-    ui::output(format!("{name}\n")).map_err(|err| Error::io("could not write to stdout", err))
+    ui::output(format!("{name}\n"))
 }
 
 /// The row ACCOUNT/ROLE names, or else the one picked from the list.

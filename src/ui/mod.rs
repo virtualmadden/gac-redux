@@ -6,6 +6,10 @@ pub mod prompt;
 
 use std::io::{self, IsTerminal, Write};
 
+use serde::Serialize;
+
+use crate::error::{Error, Result};
+
 /// Whether prompts are allowed: both stdin and stderr are terminals and `--no-input` is off.
 pub fn can_prompt(no_input: bool) -> bool {
     !no_input && io::stdin().is_terminal() && io::stderr().is_terminal()
@@ -22,13 +26,20 @@ pub fn warn(message: impl AsRef<str>) {
 }
 
 /// Writes requested data to stdout. A closed pipe (`gac list | head`) is not an error.
-pub fn output(text: impl AsRef<str>) -> io::Result<()> {
+pub fn output(text: impl AsRef<str>) -> Result<()> {
     let mut stdout = io::stdout().lock();
     match stdout
         .write_all(text.as_ref().as_bytes())
         .and_then(|()| stdout.flush())
     {
         Err(err) if err.kind() == io::ErrorKind::BrokenPipe => Ok(()),
-        other => other,
+        other => other.map_err(|err| Error::io("could not write to stdout", err)),
     }
+}
+
+/// `--json` output: pretty-printed, with a final newline.
+pub fn json(value: &impl Serialize) -> String {
+    let mut json = serde_json::to_string_pretty(value).expect("serializing plain data cannot fail");
+    json.push('\n');
+    json
 }

@@ -38,14 +38,11 @@ pub async fn run(ctx: &Context, args: DoctorArgs) -> Result<()> {
     }
     let report = &diagnosis.report;
     let text = if args.json {
-        let mut json = serde_json::to_string_pretty(&Output { report, fixed })
-            .expect("serializing plain data cannot fail");
-        json.push('\n');
-        json
+        ui::json(&Output { report, fixed })
     } else {
         report.render()
     };
-    ui::output(text).map_err(|err| Error::io("could not write to stdout", err))?;
+    ui::output(text)?;
     if report.has_failures() {
         return Err(Error::config("doctor found problems that need fixing"));
     }

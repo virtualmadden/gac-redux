@@ -17,7 +17,7 @@ pub fn completions(args: &CompletionsArgs) -> Result<()> {
     let mut script = Vec::new();
     clap_complete::generate(args.shell, &mut Cli::command(), BIN, &mut script);
     let script = String::from_utf8(script).expect("completion scripts are UTF-8");
-    ui::output(script).map_err(|err| Error::io("could not write to stdout", err))
+    ui::output(script)
 }
 
 /// Writes `gac.1` and one `gac-COMMAND.1` per visible command into the directory.

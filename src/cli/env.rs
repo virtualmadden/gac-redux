@@ -7,7 +7,7 @@ use crate::cli::context::Context;
 use crate::cli::exec;
 use crate::cli::target;
 use crate::domain::Region;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::ui;
 
 /// The variables `--unset` clears: the ones that carry the credentials.
@@ -46,7 +46,6 @@ pub async fn run(ctx: &Context, args: EnvArgs) -> Result<()> {
         exec::variables(&target, &creds, region.as_ref())
     };
     ui::output(render(args.format, &vars))
-        .map_err(|err| Error::io("could not write to stdout", err))
 }
 
 fn render(format: Format, vars: &[(&str, Option<String>)]) -> String {
@@ -55,9 +54,7 @@ fn render(format: Format, vars: &[(&str, Option<String>)]) -> String {
             .iter()
             .map(|(name, value)| ((*name).to_owned(), value.clone().into()))
             .collect();
-        let mut json = serde_json::to_string_pretty(&object).expect("strings serialize");
-        json.push('\n');
-        return json;
+        return ui::json(&object);
     }
     let mut out = String::new();
     for (name, value) in vars {
