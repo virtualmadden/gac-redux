@@ -137,6 +137,8 @@ The blocks:
   `region`, `include`, `exclude` and `chain`. In values, a space, `%`, `=` and control characters
   are percent-encoded. A minor release may add a setting. An older 1.x ignores a setting it does
   not know, and leaves it out when it writes the block again.
+- `gac sync --remove` deletes a sync block. When `gac setup` wrote the session's
+  `[sso-session]` into the block, it stays, as the same lines without the markers.
 - The profiles in a sync block keep their keys: `sso_session`, `sso_account_id` and
   `sso_role_name` in `sso` mode, `credential_process` in `process` mode, and `role_arn` and
   `source_profile` for a chain, each with `region` when one is set. `gac credential-process
