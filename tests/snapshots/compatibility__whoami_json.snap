@@ -1,0 +1,32 @@
+---
+source: tests/compatibility.rs
+expression: "masked(json(&sandbox, &[\"whoami\", \"-p\", \"payments-prod/Deploy\", \"--json\"]))"
+---
+{
+  "accountId": "111122223333",
+  "accountName": "payments-prod",
+  "chain": [
+    "arn:aws:iam::111122223333:role/Deploy"
+  ],
+  "credentials": {
+    "expiresAt": "[timestamp]",
+    "state": "valid"
+  },
+  "environmentCredentials": false,
+  "profile": "payments-prod/Deploy",
+  "region": "eu-west-1",
+  "regionSource": "profile",
+  "roleName": "Deploy",
+  "session": "corp",
+  "source": "--profile",
+  "ssoRole": {
+    "accountId": "111122223333",
+    "roleName": "AdministratorAccess"
+  },
+  "token": {
+    "expiresAt": "[timestamp]",
+    "refreshable": true,
+    "registrationExpiresAt": "[timestamp]",
+    "state": "valid"
+  }
+}

@@ -1,0 +1,11 @@
+---
+source: tests/compatibility.rs
+expression: "block(&sandbox.config(), \"# BEGIN gac-redux default\")"
+---
+# BEGIN gac-redux default
+# Managed by gac-redux: `gac select` replaces this block.
+[default]
+sso_session = corp
+sso_account_id = 111122223333
+sso_role_name = ReadOnly
+# END gac-redux default

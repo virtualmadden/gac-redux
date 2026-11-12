@@ -483,4 +483,75 @@ mod tests {
     fn the_command_line_is_well_formed() {
         Cli::command().debug_assert();
     }
+
+    /// Every command, flag, argument, value and environment variable that
+    /// docs/compatibility.md keeps stable across 1.x. A change to this snapshot is a change to
+    /// that promise: additions are fine, anything else needs a deprecation.
+    #[test]
+    fn the_stable_command_line() {
+        use std::fmt::Write as _;
+
+        fn describe(arg: &clap::Arg) -> String {
+            let values = arg
+                .get_value_names()
+                .unwrap_or_default()
+                .iter()
+                .map(|name| format!("<{name}>"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let mut line = if arg.is_positional() {
+                if arg.is_last_set() {
+                    format!("-- {values}...")
+                } else {
+                    values
+                }
+            } else {
+                let flag = match (arg.get_short(), arg.get_long()) {
+                    (Some(short), Some(long)) => format!("-{short}, --{long}"),
+                    (None, Some(long)) => format!("--{long}"),
+                    (Some(short), None) => format!("-{short}"),
+                    (None, None) => unreachable!("a flag has a name"),
+                };
+                if arg.get_num_args().is_some_and(|n| n.takes_values()) {
+                    format!("{flag} {values}")
+                } else {
+                    flag
+                }
+            };
+            let possible: Vec<_> = arg
+                .get_possible_values()
+                .iter()
+                .filter(|value| !value.is_hide_set())
+                .map(|value| value.get_name().to_owned())
+                .collect();
+            if !possible.is_empty() {
+                let _ = write!(line, " {{{}}}", possible.join(", "));
+            }
+            if let Some(env) = arg.get_env() {
+                let _ = write!(line, " [env: {}]", env.to_string_lossy());
+            }
+            line
+        }
+
+        let mut cmd = Cli::command();
+        cmd.build();
+        let mut out = String::from("gac\n");
+        for arg in cmd.get_arguments().filter(|arg| !arg.is_hide_set()) {
+            let _ = writeln!(out, "  {}", describe(arg));
+        }
+        for sub in cmd
+            .get_subcommands()
+            .filter(|sub| !sub.is_hide_set() && sub.get_name() != "help")
+        {
+            let _ = writeln!(out, "gac {}", sub.get_name());
+            for arg in sub
+                .get_arguments()
+                .filter(|arg| !arg.is_hide_set() && !arg.is_global_set())
+                .filter(|arg| arg.get_id() != "help")
+            {
+                let _ = writeln!(out, "  {}", describe(arg));
+            }
+        }
+        insta::assert_snapshot!(out);
+    }
 }

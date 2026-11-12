@@ -5,8 +5,9 @@ stays byte-compatible with the AWS CLI and SDKs. One login gives you a profile f
 and role you can use, and a list to pick the default from. AWS only.
 
 > **Status: beta.** The package is `gac-redux`; the command it installs is `gac`. Everything
-> described below works today; flags and output may still change before 1.0. Please report
-> problems in [issues](https://github.com/virtualmadden/gac-redux/issues).
+> described below works today; flags and output may still change before 1.0, which keeps what
+> [docs/compatibility.md](docs/compatibility.md) promises. Please report problems in
+> [issues](https://github.com/virtualmadden/gac-redux/issues).
 
 ## Install
 
@@ -116,7 +117,9 @@ With more than one session configured, a command uses `--session NAME`, else the
 `--profile`, else `GAC_REDUX_SESSION`, else the session of the `[default]` profile. Data goes to stdout; prompts, links and progress go to stderr. A command that needs a login
 asks to sign in first when run in a terminal; with `--no-input`, without a terminal, and always
 in `gac credential-process`, it exits with code `3` instead. Exit codes: `0` ok, `1` error,
-`2` usage, `3` login required, `130` interrupted. `-v`/`-vv` log to stderr and never print a secret.
+`2` usage, `3` login required, `130` interrupted; `gac exec` exits with the command's code, or
+`126`/`127` when it cannot run or find it. `-v`/`-vv` log to stderr and never print a secret.
+[docs/compatibility.md](docs/compatibility.md) lists what stays stable across 1.x.
 
 `gac` honors `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_ENDPOINT_URL_SSO`,
 `AWS_ENDPOINT_URL_SSO_OIDC` and `NO_COLOR`. Its own state lives in `~/.aws/gac-redux/` (mode 0700).
