@@ -40,6 +40,16 @@ Or download the archive for your platform from
 on arm64 and x86_64), check it against `SHA256SUMS`, and put `gac` on your `PATH`. To build
 from source instead: `cargo install --locked --git https://github.com/virtualmadden/gac-redux`.
 
+Every release asset after 0.5.2 has a signed build provenance attestation, so the GitHub CLI can
+check that the release workflow in this repository built it, for an archive or a package alike:
+
+```console
+$ gh attestation verify gac-redux-X.Y.Z-x86_64-unknown-linux-gnu.tar.gz --repo virtualmadden/gac-redux
+```
+
+Those releases also have an SBOM of every crate in the binary, `gac-redux-X.Y.Z.cdx.json`
+(CycloneDX), attested for every archive and package.
+
 Each archive also has `man/` with a page per command (`man gac`, `man gac-sync`) and
 `completions/` with scripts for bash, zsh, fish, PowerShell and Elvish. Without them, load
 completions straight from the binary, e.g. in `~/.zshrc` after `compinit`:

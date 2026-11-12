@@ -3,8 +3,9 @@ name: Release
 # Pushing a tag vX.Y.Z (or vX.Y.Z-beta.N) that matches the version in Cargo.toml builds the
 # binaries and the Linux packages, publishes a GitHub release (a pre-release when the version has a
 # suffix) with the notes in docs/release-notes/X.Y.Z.md, and updates the formula in
-# virtualmadden/homebrew-tap. A pull request that changes the release files runs everything up to
-# publishing, so a broken release is caught before the tag.
+# virtualmadden/homebrew-tap. Every asset gets a signed build provenance attestation, and the
+# archives and packages an SBOM attestation. A pull request that changes the release files runs
+# everything up to publishing, so a broken release is caught before the tag.
 
 on:
   push:
@@ -195,8 +196,16 @@ jobs:
           path: dist
           pattern: gac-redux-*
           merge-multiple: true
-      - name: Checksums and manifests
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-cyclonedx@0.5.10
+      - name: SBOM, checksums and manifests
         run: |
+          # The CycloneDX SBOM of every crate in the binary on every target, a release asset too.
+          cargo cyclonedx --format json --spec-version 1.5 --target all --no-build-deps \
+            --override-filename "gac-redux-$VERSION.cdx"
+          mv "gac-redux-$VERSION.cdx.json" dist/
+          jq -e '.metadata.component.version == env.VERSION' "dist/gac-redux-$VERSION.cdx.json"
           (cd dist && sha256sum gac-redux-* > SHA256SUMS && cat SHA256SUMS)
           .github/scripts/homebrew-formula.sh "$VERSION" dist/SHA256SUMS > dist/gac-redux.rb
           ruby -c dist/gac-redux.rb
@@ -216,12 +225,39 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
     steps:
       - uses: actions/checkout@v7
       - uses: actions/download-artifact@v8
         with:
           name: release
           path: dist
+      # Build provenance for every asset in SHA256SUMS, and the SBOM for the archives and
+      # packages, so `gh attestation verify FILE --repo virtualmadden/gac-redux` checks a download.
+      - uses: actions/attest@v4
+        with:
+          subject-checksums: dist/SHA256SUMS
+      - uses: actions/attest@v4
+        with:
+          subject-path: |
+            dist/gac-redux-*.tar.gz
+            dist/gac-redux-*.zip
+            dist/gac-redux-*.deb
+            dist/gac-redux-*.rpm
+          sbom-path: dist/gac-redux-${{ needs.version.outputs.version }}.cdx.json
+      - name: Verify the attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW: ${{ github.repository }}/.github/workflows/release.yml
+        run: |
+          for file in dist/gac-redux-*; do
+            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" --signer-workflow "$WORKFLOW"
+            case "$file" in *.cdx.json) continue ;; esac
+            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" --signer-workflow "$WORKFLOW" \
+              --predicate-type https://cyclonedx.org/bom
+          done
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
