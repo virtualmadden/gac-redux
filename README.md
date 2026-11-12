@@ -21,8 +21,8 @@ bash, zsh and fish completions where the system looks for them. There is no pack
 yet: to upgrade, install the next release's package the same way.
 
 ```console
-$ sudo apt install ./gac-redux-0.5.2-amd64.deb
-$ sudo dnf install ./gac-redux-0.5.2-x86_64.rpm
+$ sudo apt install ./gac-redux-0.6.0-amd64.deb
+$ sudo dnf install ./gac-redux-0.6.0-x86_64.rpm
 ```
 
 On Windows (arm64 or x64), with [Scoop](https://scoop.sh) or winget:

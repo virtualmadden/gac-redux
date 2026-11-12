@@ -19,7 +19,7 @@ body:
     id: version
     attributes:
       label: gac --version
-      placeholder: gac-redux 0.5.2
+      placeholder: gac-redux 0.6.0
     validations:
       required: true
   - type: dropdown
