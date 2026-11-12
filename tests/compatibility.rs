@@ -6,15 +6,7 @@
 mod support;
 
 use serde_json::Value;
-use support::{SESSION, Sandbox, stdout};
-
-fn login_device(sandbox: &Sandbox) {
-    sandbox
-        .gac()
-        .args(["login", "--device-code", "--no-browser"])
-        .assert()
-        .success();
-}
+use support::{SESSION, Sandbox, exit_with, is_timestamp, login_device, stdout};
 
 /// Runs `gac` with `args` and returns its stdout as JSON, whatever the exit code.
 fn json(sandbox: &Sandbox, args: &[&str]) -> Value {
@@ -49,17 +41,6 @@ fn masked(mut value: Value) -> String {
     text
 }
 
-fn is_timestamp(s: &str) -> bool {
-    s.len() == 20
-        && s.bytes().enumerate().all(|(i, b)| match i {
-            4 | 7 => b == b'-',
-            10 => b == b'T',
-            13 | 16 => b == b':',
-            19 => b == b'Z',
-            _ => b.is_ascii_digit(),
-        })
-}
-
 /// The managed block of the config file that starts with `begin`, with `\n` line endings.
 fn block(config: &str, begin: &str) -> String {
     let config = config.replace("\r\n", "\n");
@@ -72,15 +53,6 @@ fn block(config: &str, begin: &str) -> String {
     let end = start + config[start..].find(end_marker).unwrap();
     let end = end + config[end..].find('\n').unwrap() + 1;
     config[start..end].to_owned()
-}
-
-/// A command that exits 0, on every platform.
-fn exit_0() -> [&'static str; 3] {
-    if cfg!(windows) {
-        ["cmd", "/C", "exit 0"]
-    } else {
-        ["sh", "-c", "exit 0"]
-    }
 }
 
 #[test]
@@ -136,7 +108,7 @@ fn whoami_json() {
     sandbox
         .gac()
         .args(["exec", "-p", "payments-prod/Deploy", "--"])
-        .args(exit_0())
+        .args(exit_with("0"))
         .assert()
         .success();
     insta::assert_snapshot!(masked(json(

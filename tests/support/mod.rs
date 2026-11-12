@@ -263,6 +263,43 @@ pub fn assert_no_secrets(text: &str, secrets: &[String], context: &str) {
     }
 }
 
+/// Logs the sandbox in to the `corp` session with the device code flow, which the mock approves.
+pub fn login_device(sandbox: &Sandbox) {
+    sandbox
+        .gac()
+        .args(["login", "--device-code", "--no-browser"])
+        .assert()
+        .success();
+}
+
+/// A command that exits with `code`, on every platform.
+pub fn exit_with(code: &str) -> Vec<String> {
+    if cfg!(windows) {
+        vec!["cmd".into(), "/C".into(), format!("exit {code}")]
+    } else {
+        vec!["sh".into(), "-c".into(), format!("exit {code}")]
+    }
+}
+
+/// Whether `text` is a timestamp as gac writes them: `YYYY-MM-DDTHH:MM:SSZ`.
+pub fn is_timestamp(text: &str) -> bool {
+    text.len() == 20
+        && text.bytes().enumerate().all(|(i, b)| match i {
+            4 | 7 => b == b'-',
+            10 => b == b'T',
+            13 | 16 => b == b':',
+            19 => b == b'Z',
+            _ => b.is_ascii_digit(),
+        })
+}
+
+/// The first timestamp in `text`.
+pub fn find_timestamp(text: &str) -> Option<&str> {
+    (0..text.len())
+        .filter_map(|i| text.get(i..i + 20))
+        .find(|s| is_timestamp(s))
+}
+
 pub fn stdout(output: &std::process::Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
