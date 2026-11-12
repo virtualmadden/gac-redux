@@ -1,5 +1,5 @@
 ---
-source: tests/cli.rs
+source: tests/cli/commands.rs
 expression: "String::from_utf8_lossy(&help.get_output().stdout)"
 ---
 Short-lived AWS credentials through IAM Identity Center.

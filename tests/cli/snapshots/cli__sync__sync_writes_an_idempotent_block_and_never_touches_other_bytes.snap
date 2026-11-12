@@ -1,5 +1,5 @@
 ---
-source: tests/cli.rs
+source: tests/cli/sync.rs
 expression: "block.replace(\"\\r\\n\", \"\\n\")"
 ---
 
