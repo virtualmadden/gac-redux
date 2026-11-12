@@ -1062,6 +1062,52 @@ fn an_expired_token_whose_refresh_is_rejected_is_not_promised_a_refresh() {
     );
 }
 
+/// Every command that needs a token, with the portal session ended under a valid-looking
+/// refresh token: each tries the refresh once and asks for a login with the service's reason.
+#[test]
+fn every_command_that_refreshes_asks_for_a_login_when_the_portal_session_ended() {
+    let sandbox = Sandbox::with_session();
+    role_profiles_config(&sandbox);
+    login_device(&sandbox);
+    let mut ended = sandbox.token("corp");
+    ended["expiresAt"] = json!("2020-01-01T00:00:00Z");
+    ended["refreshToken"] = json!("FAKE-ENDED");
+    let exec: Vec<String> = ["exec", "--"]
+        .into_iter()
+        .map(String::from)
+        .chain(exit_with("0"))
+        .collect();
+    let commands: Vec<Vec<String>> = vec![
+        vec!["list".into(), "--refresh".into()],
+        vec!["sync".into(), "--refresh".into()],
+        vec!["select".into(), "payments-prod/ReadOnly".into()],
+        exec,
+        vec!["env".into()],
+        vec!["console".into(), "--print".into()],
+        vec![
+            "credential-process".into(),
+            "--session".into(),
+            "corp".into(),
+            "--account-id".into(),
+            "777788889999".into(),
+            "--role-name".into(),
+            "PowerUser".into(),
+        ],
+    ];
+    for args in commands {
+        sandbox.write_token("corp", &ended);
+        let rejected = sandbox.mock.counter("refresh_rejected");
+        let output = sandbox.gac().args(&args).assert().code(3);
+        let err = stderr(output.get_output());
+        assert!(err.contains("InvalidGrantException"), "{args:?}: {err}");
+        assert!(err.contains("gac login --session corp"), "{args:?}: {err}");
+        assert!(
+            sandbox.mock.counter("refresh_rejected") > rejected,
+            "{args:?} tried the refresh"
+        );
+    }
+}
+
 #[test]
 fn status_and_doctor_refresh_an_expired_token_the_service_still_accepts() {
     for command in ["status", "doctor"] {
