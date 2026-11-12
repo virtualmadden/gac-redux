@@ -4,6 +4,7 @@ use std::fmt::Write as _;
 
 use serde::Serialize;
 
+use crate::auth::botocore_json::timestamp;
 use crate::cli::ListArgs;
 use crate::cli::context::Context;
 use crate::error::{Error, Result};
@@ -25,7 +26,7 @@ pub async fn run(ctx: &Context, args: ListArgs) -> Result<()> {
     let text = if args.json {
         let listing = Listing {
             session: session.cache_key(),
-            fetched_at: snapshot.fetched_at.to_string(),
+            fetched_at: timestamp::format(snapshot.fetched_at),
             accounts: &snapshot.items,
         };
         let mut json =

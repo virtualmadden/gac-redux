@@ -1,0 +1,72 @@
+---
+source: src/cli/mod.rs
+expression: out
+---
+gac
+  --session <NAME> [env: GAC_REDUX_SESSION]
+  --no-input
+  -v, --verbose
+  -h, --help
+  -V, --version
+gac setup
+  --start-url <URL>
+  --region <REGION>
+gac login
+  -p, --profile <NAME>
+  --device-code
+  --pkce
+  --no-browser
+  --port <N>
+gac logout
+  -p, --profile <NAME>
+  --all
+gac select
+  <ACCOUNT/ROLE>
+  --clear
+  --adopt
+  --print
+gac status
+  --json
+gac sync
+  --mode <MODE> {sso, process}
+  --name <TEMPLATE>
+  --include <GLOB>
+  --exclude <GLOB>
+  --region <REGION>
+  --chain <SOURCE=ROLE_ARN>
+  --reset
+  --refresh
+  --dry-run
+gac list
+  --json
+  --refresh
+gac whoami
+  -p, --profile <NAME>
+  --json
+gac exec
+  -p, --profile <NAME>
+  --region <REGION>
+  --force
+  <ACCOUNT/ROLE>
+  -- <COMMAND>...
+gac env
+  -p, --profile <NAME>
+  --region <REGION>
+  --format <FORMAT> {sh, fish, powershell, json}
+  --unset
+  <ACCOUNT/ROLE>
+gac console
+  -p, --profile <NAME>
+  --region <REGION>
+  --destination <PAGE>
+  --print
+  <ACCOUNT/ROLE>
+gac credential-process
+  --account-id <ID>
+  --role-name <ROLE>
+gac doctor
+  --json
+  --fix
+  --yes
+gac completions
+  <SHELL> {bash, elvish, fish, powershell, zsh}

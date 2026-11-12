@@ -1,0 +1,36 @@
+---
+source: tests/compatibility.rs
+expression: "masked(json(&sandbox, &[\"list\", \"--json\"]))"
+---
+{
+  "accounts": [
+    {
+      "accountId": "111122223333",
+      "accountName": "payments-prod",
+      "email": "111122223333@example.invalid",
+      "roles": [
+        "AdministratorAccess",
+        "ReadOnly"
+      ]
+    },
+    {
+      "accountId": "777788889999",
+      "accountName": "sandbox",
+      "email": "777788889999@example.invalid",
+      "roles": [
+        "PowerUser",
+        "ReadOnly"
+      ]
+    },
+    {
+      "accountId": "444455556666",
+      "accountName": "Shared Services",
+      "email": "444455556666@example.invalid",
+      "roles": [
+        "ReadOnly"
+      ]
+    }
+  ],
+  "fetchedAt": "[timestamp]",
+  "session": "corp"
+}

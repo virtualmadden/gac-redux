@@ -1,0 +1,27 @@
+---
+source: tests/compatibility.rs
+expression: "block(&sandbox.config(), \"# BEGIN gac-redux sync session=corp\")"
+---
+# BEGIN gac-redux sync session=corp mode=process name={session}.{account_id}.{role} region=eu-west-1 include=payments-prod/* include=sandbox/* exclude=sandbox/AdministratorAccess chain=*/AdministratorAccess%3Darn:aws:iam::{account_id}:role/Deploy
+# Managed by gac-redux: edits inside this block are replaced on the next sync.
+[profile corp.111122223333.AdministratorAccess]
+credential_process = gac credential-process --session corp --account-id 111122223333 --role-name AdministratorAccess
+region = eu-west-1
+
+[profile corp.111122223333.ReadOnly]
+credential_process = gac credential-process --session corp --account-id 111122223333 --role-name ReadOnly
+region = eu-west-1
+
+[profile corp.777788889999.PowerUser]
+credential_process = gac credential-process --session corp --account-id 777788889999 --role-name PowerUser
+region = eu-west-1
+
+[profile corp.777788889999.ReadOnly]
+credential_process = gac credential-process --session corp --account-id 777788889999 --role-name ReadOnly
+region = eu-west-1
+
+[profile corp.111122223333.Deploy]
+role_arn = arn:aws:iam::111122223333:role/Deploy
+source_profile = corp.111122223333.AdministratorAccess
+region = eu-west-1
+# END gac-redux sync session=corp

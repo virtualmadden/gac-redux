@@ -1,0 +1,52 @@
+---
+source: tests/compatibility.rs
+expression: "masked(json(&sandbox, &[\"doctor\", \"--json\"]))"
+---
+{
+  "findings": [
+    {
+      "check": "home",
+      "level": "ok",
+      "message": "[text]"
+    },
+    {
+      "check": "file-modes",
+      "level": "ok",
+      "message": "[text]"
+    },
+    {
+      "check": "config",
+      "level": "ok",
+      "message": "[text]"
+    },
+    {
+      "check": "mixed-credentials",
+      "fix": "[text]",
+      "level": "fail",
+      "message": "[text]"
+    },
+    {
+      "check": "sessions",
+      "fix": "[text]",
+      "level": "warn",
+      "message": "[text]"
+    },
+    {
+      "check": "legacy-profiles",
+      "fix": "[text]",
+      "fixable": true,
+      "level": "warn",
+      "message": "[text]"
+    },
+    {
+      "check": "managed-blocks",
+      "level": "ok",
+      "message": "[text]"
+    },
+    {
+      "check": "default-profile",
+      "level": "ok",
+      "message": "[text]"
+    }
+  ]
+}
