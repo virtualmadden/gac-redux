@@ -1220,6 +1220,121 @@ fn sync_refuses_colliding_names() {
 }
 
 #[test]
+fn sync_remove_gives_back_the_file_as_it_was_without_a_login() {
+    let sandbox = Sandbox::new();
+    let original = format!(
+        "# hand-written\r\n[profile mine]\r\nregion = eu-west-1\r\n\r\n{}",
+        SESSION.replace('\n', "\r\n")
+    );
+    sandbox.write_config(&original);
+    login_device(&sandbox);
+    sandbox
+        .gac()
+        .args(["sync", "--mode", "process"])
+        .assert()
+        .success();
+    let synced = sandbox.config();
+    // Removing needs no login.
+    sandbox.gac().arg("logout").assert().success();
+
+    let dry = sandbox
+        .gac()
+        .args(["sync", "--remove", "--dry-run"])
+        .assert()
+        .success()
+        .stderr("Dry run: 5 profiles to remove. Nothing was written.\n");
+    let diff = stdout(dry.get_output());
+    assert!(
+        diff.contains("-# BEGIN gac-redux sync session=corp mode=process"),
+        "{diff}"
+    );
+    assert_eq!(sandbox.config(), synced, "a dry run writes nothing");
+
+    sandbox
+        .gac()
+        .args(["sync", "--remove"])
+        .assert()
+        .success()
+        .stderr(predicate::str::starts_with(
+            "Removed the `corp` block and its 5 profiles from ",
+        ));
+    assert_eq!(sandbox.config(), original);
+
+    sandbox
+        .gac()
+        .args(["sync", "--remove"])
+        .assert()
+        .success()
+        .stderr("There is no gac block for session `corp`. Nothing to remove.\n");
+    assert_eq!(sandbox.config(), original);
+}
+
+#[test]
+fn sync_remove_keeps_the_session_setup_wrote_into_the_block() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config("[default]\nregion = eu-west-1\n");
+    sandbox
+        .gac()
+        .args([
+            "setup",
+            "--session",
+            "corp",
+            "--start-url",
+            START_URL,
+            "--region",
+            "us-west-2",
+        ])
+        .assert()
+        .success();
+    login_device(&sandbox);
+    sandbox.gac().arg("sync").assert().success();
+    sandbox
+        .gac()
+        .args(["sync", "--remove"])
+        .assert()
+        .success()
+        .stderr(predicate::str::ends_with(
+            " [sso-session corp] stays, outside the block.\n",
+        ));
+    assert_eq!(
+        sandbox.config(),
+        format!("[default]\nregion = eu-west-1\n\n{SESSION}")
+    );
+    // The session still works, for gac and the AWS CLI alike.
+    sandbox
+        .gac()
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("session corp"));
+}
+
+#[test]
+fn sync_remove_warns_about_profiles_that_chain_from_the_block() {
+    let sandbox = Sandbox::with_session();
+    login_device(&sandbox);
+    sandbox.gac().arg("sync").assert().success();
+    let config = format!(
+        "{}\n[profile deploy]\nrole_arn = arn:aws:iam::111122223333:role/Deploy\nsource_profile = payments-prod/ReadOnly\n",
+        sandbox.config()
+    );
+    sandbox.write_config(&config);
+    sandbox
+        .gac()
+        .args(["sync", "--remove"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "profile `deploy` has source_profile `payments-prod/ReadOnly`, which was in the block",
+        ));
+    sandbox
+        .gac()
+        .args(["sync", "--remove", "--include", "*"])
+        .assert()
+        .code(2);
+}
+
+#[test]
 fn status_shows_sessions_and_blocks_without_secrets() {
     let sandbox = Sandbox::with_session();
     sandbox

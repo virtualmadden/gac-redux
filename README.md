@@ -48,6 +48,8 @@ completions straight from the binary, e.g. in `~/.zshrc` after `compinit`:
 source <(gac completions zsh)
 ```
 
+To uninstall, see [How do I stop using gac?](#how-do-i-stop-using-gac)
+
 ## How it works
 
 `gac` sets up the SDKs' own Identity Center support and then gets out of the way:
@@ -103,7 +105,7 @@ $ aws s3 ls --profile payments-prod/ReadOnly
 | `gac select` | Picks the account and role of the `[default]` profile from a list of every session's accounts and roles. `ACCOUNT/ROLE` picks without the list, `--clear` takes them out again, `--adopt` takes over a `[default]` you wrote, `--print` prints the chosen role's profile name instead of writing anything |
 | `gac logout` | Revokes the session (`sso:Logout`), deletes its token and, as `aws sso logout` does, every role credential the AWS CLI cached from SSO tokens. `--all` |
 | `gac status` | Sessions, token and registration expiry, sync blocks. No secrets. Refreshes an expired token, as the next AWS command would, to show whether the session still works. `--json` |
-| `gac sync` | Writes and prunes the managed block. `--mode sso\|process`, `--name TEMPLATE`, `--include`/`--exclude GLOB`, `--chain SOURCE=ROLE_ARN`, `--region`, `--reset`, `--refresh`, `--dry-run` |
+| `gac sync` | Writes and prunes the managed block. `--mode sso\|process`, `--name TEMPLATE`, `--include`/`--exclude GLOB`, `--chain SOURCE=ROLE_ARN`, `--region`, `--reset`, `--refresh`, `--dry-run`. `--remove` deletes the block and its profiles, keeping a session `gac setup` wrote into it |
 | `gac list` | Accounts and roles, from a one-hour inventory cache. `--json`, `--refresh` |
 | `gac whoami` | The account, role and region AWS tools use right now, which rule picked them (`--profile`, `AWS_PROFILE`, `[default]`), and how long the token and role credentials last. Reads only local files, so it suits a shell prompt. `-p PROFILE`, `--json` |
 | `gac exec -- CMD` | Runs a command with a role's keys in `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`, for tools that cannot use SSO profiles. The role is `ACCOUNT/ROLE`, else that of `--profile`, `AWS_PROFILE` or `[default]`. Exits with the command's code. `--region`, `--force` |
@@ -152,7 +154,8 @@ without touching `[default]`.
 
 Yes. `gac` writes the same token cache and the same native `sso-session` profiles the AWS CLI
 does, so `aws sso login`, `aws sso logout`, the AWS CLI and every SDK that supports Identity
-Center share one login, and you can stop using `gac` at any time without breaking a profile.
+Center share one login. The profiles `gac sync` writes by default are plain AWS CLI profiles that
+keep working without `gac`; only those from `gac sync --mode process` run `gac` itself.
 
 ### Does it work with Okta, Microsoft Entra ID or Google Workspace?
 
@@ -185,6 +188,23 @@ written.
 Yes. Over SSH, `gac login` uses a device code: it prints a link and a code to open on any other
 device. `--device-code` forces that anywhere, and `--no-browser` prints the link instead of opening
 it.
+
+### How do I stop using gac?
+
+1. `gac logout` ends the session, if you want it ended. The AWS CLI shares the login, so
+   `aws sso logout` does the same later.
+2. `gac sync --remove` deletes the session's block and every profile in it (add `--session NAME`
+   for each session). A `[sso-session]` that `gac setup` wrote into the block stays, as plain
+   lines. To keep the profiles instead, run `gac sync --mode sso` and leave the block: the AWS CLI
+   reads it like any other lines, and the markers are comments. Only `--mode process` profiles
+   need `gac`.
+3. The `[default]` profile `gac select` wrote keeps working as it is; its markers are comments.
+   `gac select --clear` takes out the account and role first, if you'd rather it named none.
+4. Uninstall the package the way you installed it: `brew uninstall gac-redux`,
+   `sudo apt remove gac-redux`, `sudo dnf remove gac-redux`, `scoop uninstall gac-redux`,
+   `winget uninstall virtualmadden.gac-redux` or `cargo uninstall gac-redux`.
+5. Delete `~/.aws/gac-redux/`, which holds only `gac`'s own caches. `~/.aws/sso/cache` is the AWS
+   CLI's too, so leave it.
 
 ### Something is wrong with my AWS files. Where do I start?
 

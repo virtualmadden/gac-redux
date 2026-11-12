@@ -189,6 +189,7 @@ struct StatusArgs {
 }
 
 #[derive(Debug, Args)]
+#[allow(clippy::struct_excessive_bools)] // one per independent flag, as clap parses them
 struct SyncArgs {
     /// Write native SSO profiles (`sso`), or `credential_process` profiles for tools without SSO support (`process`) [default: sso]
     #[arg(long, value_enum, value_name = "MODE")]
@@ -225,6 +226,13 @@ struct SyncArgs {
     /// Print the change as a diff and write nothing.
     #[arg(long)]
     dry_run: bool,
+
+    /// Delete the session's block and its profiles. A session `gac setup` wrote into the block stays.
+    #[arg(
+        long,
+        conflicts_with_all = ["mode", "name", "include", "exclude", "region", "chain", "reset", "refresh"]
+    )]
+    remove: bool,
 }
 
 #[derive(Debug, Args)]

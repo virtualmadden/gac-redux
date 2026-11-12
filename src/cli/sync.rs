@@ -11,6 +11,9 @@ use crate::profiles::{self, PlannedProfile, SyncSettings};
 use crate::ui;
 
 pub async fn run(ctx: &Context, args: SyncArgs) -> Result<()> {
+    if args.remove {
+        return remove(ctx, args.dry_run).await;
+    }
     let files = ctx.files().await?;
     let session = ctx.resolve_session(&files, None)?;
     let name = session
@@ -75,12 +78,7 @@ pub async fn run(ctx: &Context, args: SyncArgs) -> Result<()> {
                 after.len()
             ));
         } else {
-            let diff = similar::TextDiff::from_lines(text, &updated)
-                .unified_diff()
-                .context_radius(3)
-                .header(&config_path, &config_path)
-                .to_string();
-            ui::output(diff).map_err(|err| Error::io("could not write to stdout", err))?;
+            print_diff(text, &updated, &config_path)?;
             ui::notice(format!(
                 "Dry run: {added} to add, {removed} to remove. Nothing was written."
             ));
@@ -100,6 +98,107 @@ pub async fn run(ctx: &Context, args: SyncArgs) -> Result<()> {
         after.len()
     ));
     Ok(())
+}
+
+/// `gac sync --remove`: deletes the session's block. Needs no login, so it works on the way out.
+async fn remove(ctx: &Context, dry_run: bool) -> Result<()> {
+    let files = ctx.files().await?;
+    let session = ctx.resolve_session(&files, None)?;
+    let name = session
+        .name()
+        .expect("sync resolves only named sessions")
+        .clone();
+    let text = files.config_text();
+    let blocks = ctx.blocks(&files)?;
+    let Some(block) = blocks.iter().find(|b| b.header.session == name.as_str()) else {
+        ui::notice(format!(
+            "There is no gac block for session `{name}`. Nothing to remove."
+        ));
+        return Ok(());
+    };
+    let removed: BTreeSet<&str> = block.profile_names(text).collect();
+
+    let outside = AwsFiles::parse(managed_block::without(text, block), "").await?;
+    // A session `gac setup` created lives in the block. It stays, as plain lines in its place,
+    // for the AWS CLI and any profile that uses it.
+    let keeps_session = !outside.has_session(name.as_str());
+    let updated = if keeps_session {
+        let eol = managed_block::line_ending(text);
+        let mut session_lines = String::new();
+        for line in profiles::render_session(&files.sso_session(&name)?) {
+            session_lines.push_str(&line);
+            session_lines.push_str(eol);
+        }
+        format!(
+            "{}{session_lines}{}",
+            &text[..block.range.start],
+            &text[block.range.end..]
+        )
+    } else {
+        let mut start = block.range.start;
+        // `gac sync` put a blank line before a block it appended; take it out with the block.
+        if block.range.end == text.len() {
+            let before = &text[..start];
+            for blank in ["\r\n\r\n", "\n\n"] {
+                if before.ends_with(blank) {
+                    start -= blank.len() / 2;
+                    break;
+                }
+            }
+        }
+        format!("{}{}", &text[..start], &text[block.range.end..])
+    };
+
+    let config_path = ctx.paths.config_file().display().to_string();
+    let session_note = if keeps_session {
+        format!(" [sso-session {name}] stays, outside the block.")
+    } else {
+        String::new()
+    };
+    if dry_run {
+        print_diff(text, &updated, &config_path)?;
+        ui::notice(format!(
+            "Dry run: {} to remove.{session_note} Nothing was written.",
+            count(removed.len())
+        ));
+        return Ok(());
+    }
+    ctx.write_config(text, &updated).await?;
+    let what = match removed.len() {
+        0 => String::new(),
+        n => format!(" and its {}", count(n)),
+    };
+    ui::notice(format!(
+        "Removed the `{name}` block{what} from {config_path}.{session_note}"
+    ));
+    for profile in outside.config_profile_names() {
+        if let Some(source) = outside
+            .config_profile(profile)
+            .and_then(|p| p.get("source_profile"))
+            .filter(|source| removed.contains(source))
+        {
+            ui::warn(format!(
+                "profile `{profile}` has source_profile `{source}`, which was in the block"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn count(profiles: usize) -> String {
+    match profiles {
+        1 => "1 profile".to_owned(),
+        n => format!("{n} profiles"),
+    }
+}
+
+fn print_diff(text: &str, updated: &str, config_path: &str) -> Result<()> {
+    let diff = similar::TextDiff::from_lines(text, updated)
+        .unified_diff()
+        .context_radius(3)
+        .header(config_path, config_path)
+        .to_string();
+    ui::output(diff).map_err(|err| Error::io("could not write to stdout", err))
 }
 
 /// The stored settings (unless `--reset`), overridden by any flags given.

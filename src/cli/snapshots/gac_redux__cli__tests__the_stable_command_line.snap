@@ -37,6 +37,7 @@ gac sync
   --reset
   --refresh
   --dry-run
+  --remove
 gac list
   --json
   --refresh
