@@ -47,6 +47,11 @@ expression: "masked(json(&sandbox, &[\"doctor\", \"--json\"]))"
       "check": "default-profile",
       "level": "ok",
       "message": "[text]"
+    },
+    {
+      "check": "older-release",
+      "level": "ok",
+      "message": "[text]"
     }
   ]
 }

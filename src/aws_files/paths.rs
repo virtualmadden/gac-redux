@@ -70,11 +70,16 @@ impl AwsPaths {
         self.home.join(".aws").join(STATE_DIR_NAME)
     }
 
+    /// `~/.aws/gac`, the state directory's name before the rename.
+    pub fn legacy_state_dir(&self) -> PathBuf {
+        self.home.join(".aws").join(LEGACY_STATE_DIR_NAME)
+    }
+
     /// Moves the state directory from its name before the rename, `~/.aws/gac`, unless the
     /// current one already exists. Its contents are caches and a lock, so a failure only costs a
     /// refetch and is not an error.
     pub fn migrate_legacy_state_dir(&self) {
-        let legacy = self.home.join(".aws").join(LEGACY_STATE_DIR_NAME);
+        let legacy = self.legacy_state_dir();
         let current = self.state_dir();
         if !legacy.is_dir() || current.exists() {
             return;

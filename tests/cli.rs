@@ -766,6 +766,70 @@ fn state_and_blocks_from_before_the_rename_are_migrated() {
 }
 
 #[test]
+fn doctor_flags_and_fixes_what_a_release_before_the_rename_left() {
+    let sandbox = Sandbox::new();
+    let legacy_block = "# BEGIN gac sync session=corp mode=sso name={account}/{role}\n\
+                        # Managed by gac: edits inside this block are replaced on the next sync.\n\
+                        [profile old/Role]\n\
+                        sso_session = corp\n\
+                        sso_account_id = 111122223333\n\
+                        sso_role_name = Role\n\
+                        # END gac sync session=corp\n";
+    sandbox.write_config(&format!("{SESSION}\n{legacy_block}"));
+    // Both state directories: the old one is only moved when the new one is missing.
+    let legacy_state = sandbox.home().join(".aws/gac");
+    std::fs::create_dir_all(legacy_state.join("inventory")).unwrap();
+    std::fs::create_dir_all(sandbox.home().join(".aws/gac-redux")).unwrap();
+    let doctor = |args: &[&str]| {
+        let output = sandbox
+            .gac()
+            .arg("doctor")
+            .args(args)
+            .env("GAC_SESSION", "corp")
+            .output()
+            .unwrap();
+        (stdout(&output), stderr(&output))
+    };
+
+    let (report, _) = doctor(&[]);
+    for line in [
+        "[warn] older-release: the gac block for session `corp` has the `# BEGIN gac sync` markers from before the rename",
+        "is left from before the rename;",
+        "[warn] older-release: GAC_SESSION is set, but gac reads GAC_REDUX_SESSION now",
+    ] {
+        assert!(report.contains(line), "{line:?} in\n{report}");
+    }
+
+    let (_, notices) = doctor(&["--fix"]);
+    assert!(
+        notices
+            .contains("give the gac block of session `corp` the `# BEGIN gac-redux sync` markers"),
+        "{notices}"
+    );
+    assert!(!legacy_state.exists(), "the old state directory is gone");
+    assert_eq!(
+        sandbox.config(),
+        format!(
+            "{SESSION}\n# BEGIN gac-redux sync session=corp mode=sso name={{account}}/{{role}}\n\
+             # Managed by gac-redux: edits inside this block are replaced on the next sync.\n\
+             [profile old/Role]\n\
+             sso_session = corp\n\
+             sso_account_id = 111122223333\n\
+             sso_role_name = Role\n\
+             # END gac-redux sync session=corp\n"
+        )
+    );
+    // Only the variable is left, which gac cannot rename for you.
+    let (report, _) = doctor(&[]);
+    let older: Vec<&str> = report
+        .lines()
+        .filter(|l| l.contains("older-release"))
+        .collect();
+    assert_eq!(older.len(), 1, "{report}");
+    assert!(older[0].contains("GAC_SESSION"), "{report}");
+}
+
+#[test]
 fn list_uses_the_inventory_cache() {
     let sandbox = Sandbox::with_session();
     login_device(&sandbox);

@@ -18,6 +18,10 @@ pub enum Action {
     Chmod { path: PathBuf, mode: u32 },
     /// The gac block of a session whose `[sso-session]` is gone.
     RemoveBlock { session: String },
+    /// A gac block with the markers from before the rename.
+    RenameMarkers { session: String },
+    /// The state directory from before the rename, `~/.aws/gac`.
+    RemoveDir { path: PathBuf },
     /// An `[sso-session]` without `sso_registration_scopes`.
     AddScopes { session: String },
     /// A profile with an inline `sso_start_url`.
@@ -45,6 +49,12 @@ enum Edit {
     RemoveBlock {
         session: String,
     },
+    RenameMarkers {
+        session: String,
+    },
+    RemoveDir {
+        path: PathBuf,
+    },
     AddScopes {
         session: String,
     },
@@ -58,13 +68,15 @@ enum Edit {
 impl Fix {
     /// Whether it edits the config file, rather than a file's mode.
     pub fn edits_config(&self) -> bool {
-        !matches!(self.edit, Edit::Chmod { .. })
+        !matches!(self.edit, Edit::Chmod { .. } | Edit::RemoveDir { .. })
     }
 
     /// Changes a file's mode. A fix that edits the config file does nothing here.
     pub fn apply_to_disk(&self) -> crate::error::Result<()> {
         match &self.edit {
             Edit::Chmod { path, mode } => fsx::set_mode(path, *mode),
+            Edit::RemoveDir { path } => std::fs::remove_dir_all(path)
+                .map_err(|err| crate::error::Error::io_at("delete", path, err)),
             _ => Ok(()),
         }
     }
@@ -72,7 +84,7 @@ impl Fix {
     /// The config file's `text` with the fix applied, or why it cannot be.
     pub fn apply_to_config(&self, text: &str) -> Result<String, String> {
         match &self.edit {
-            Edit::Chmod { .. } => Ok(text.to_owned()),
+            Edit::Chmod { .. } | Edit::RemoveDir { .. } => Ok(text.to_owned()),
             Edit::RemoveBlock { session } => {
                 let blocks = managed_block::scan(text).map_err(|err| err.to_string())?;
                 let block = blocks
@@ -80,6 +92,14 @@ impl Fix {
                     .find(|b| b.header.session == *session)
                     .ok_or_else(|| format!("the gac block for session `{session}` is gone"))?;
                 Ok(managed_block::without(text, block))
+            }
+            Edit::RenameMarkers { session } => {
+                let blocks = managed_block::scan(text).map_err(|err| err.to_string())?;
+                let block = blocks
+                    .iter()
+                    .find(|b| b.header.session == *session)
+                    .ok_or_else(|| format!("the gac block for session `{session}` is gone"))?;
+                Ok(managed_block::with_current_markers(text, block))
             }
             Edit::AddScopes { session } => {
                 let (mut section, _) =
@@ -148,6 +168,22 @@ pub fn plan(actions: &[Action], files: &AwsFiles) -> Vec<Fix> {
                 edit: Edit::RemoveBlock {
                     session: session.clone(),
                 },
+            }),
+            Action::RenameMarkers { session } => planned.push(Fix {
+                summary: format!(
+                    "give the gac block of session `{session}` the `# BEGIN gac-redux sync` markers"
+                ),
+                needs_consent: false,
+                next: None,
+                edit: Edit::RenameMarkers {
+                    session: session.clone(),
+                },
+            }),
+            Action::RemoveDir { path } => planned.push(Fix {
+                summary: format!("delete {}, left from before the rename", path.display()),
+                needs_consent: false,
+                next: None,
+                edit: Edit::RemoveDir { path: path.clone() },
             }),
             Action::AddScopes { .. } | Action::MoveLegacy { .. } => {}
         }

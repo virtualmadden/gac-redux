@@ -126,9 +126,9 @@ in `gac credential-process`, it exits with code `3` instead. Exit codes: `0` ok,
 `gac` honors `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_ENDPOINT_URL_SSO`,
 `AWS_ENDPOINT_URL_SSO_OIDC` and `NO_COLOR`. Its own state lives in `~/.aws/gac-redux/` (mode 0700).
 
-Upgrading from the `gac` pre-release: `~/.aws/gac/` is moved to `~/.aws/gac-redux/` on the first
-run, and blocks with `# BEGIN gac sync` markers keep working and get the new markers on the next
-`gac sync`. Rename `GAC_SESSION` and `GAC_LOG` to `GAC_REDUX_SESSION` and `GAC_REDUX_LOG`.
+Upgrading needs nothing more than installing the new version; [docs/upgrading.md](docs/upgrading.md)
+lists what changed during 0.x, including the rename from the `gac` pre-release. `gac doctor` reports
+anything an older release left behind.
 
 ## Questions
 

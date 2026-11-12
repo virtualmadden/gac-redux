@@ -104,7 +104,7 @@ These outputs are stable:
 | `fixed` | With `--fix`, what it changed |
 
 A `check` names one area: `home`, `file-modes`, `config`, `mixed-credentials`, `sessions`,
-`legacy-profiles`, `managed-blocks` or `default-profile`. New checks may appear.
+`legacy-profiles`, `managed-blocks`, `default-profile` or `older-release`. New checks may appear.
 
 `gac env --format json` is an object from each variable name to its value, or `null` to unset it.
 

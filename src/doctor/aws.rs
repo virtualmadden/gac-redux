@@ -26,7 +26,15 @@ pub struct Inputs<'a> {
     /// caller tries the refresh first, since only the service knows whether the refresh token
     /// still works.
     pub refresh_failures: &'a BTreeMap<String, String>,
+    /// The variables from [`RENAMED_VARS`] that are set under their old names.
+    pub old_vars: Vec<&'static str>,
 }
+
+/// Environment variables renamed with the project: (old name, current name).
+pub const RENAMED_VARS: [(&str, &str); 2] = [
+    ("GAC_SESSION", "GAC_REDUX_SESSION"),
+    ("GAC_LOG", "GAC_REDUX_LOG"),
+];
 
 /// The report, and the actions that repair the findings marked fixable.
 #[derive(Debug, Default)]
@@ -61,7 +69,57 @@ pub fn run(inputs: &Inputs<'_>) -> Diagnosis {
             "correct the file; gac and the AWS SDKs read it with the same parser",
         ),
     }
+    check_older_release(&mut report, &mut actions, inputs);
     Diagnosis { report, actions }
+}
+
+/// What a release from before the rename to gac-redux left behind. gac still reads all of it.
+fn check_older_release(report: &mut Report, actions: &mut Vec<Action>, inputs: &Inputs<'_>) {
+    const CHECK: &str = "older-release";
+    let blocks = inputs
+        .files
+        .as_ref()
+        .ok()
+        .and_then(|files| managed_block::scan(files.config_text()).ok())
+        .unwrap_or_default();
+    for block in blocks.iter().filter(|b| b.legacy) {
+        let session = &block.header.session;
+        report.warn_fixable(
+            CHECK,
+            format!("the gac block for session `{session}` has the `# BEGIN gac sync` markers from before the rename"),
+            "replace them with `# BEGIN gac-redux sync` markers, or run `gac sync`",
+        );
+        actions.push(Action::RenameMarkers {
+            session: session.clone(),
+        });
+    }
+    let legacy_dir = inputs.paths.legacy_state_dir();
+    if legacy_dir.is_dir() {
+        report.warn_fixable(
+            CHECK,
+            format!(
+                "{} is left from before the rename; {} replaced it",
+                legacy_dir.display(),
+                inputs.paths.state_dir().display()
+            ),
+            format!("delete {}", legacy_dir.display()),
+        );
+        actions.push(Action::RemoveDir { path: legacy_dir });
+    }
+    for old in &inputs.old_vars {
+        let current = RENAMED_VARS
+            .iter()
+            .find(|(name, _)| name == old)
+            .map_or("", |(_, current)| current);
+        report.warn(
+            CHECK,
+            format!("{old} is set, but gac reads {current} now"),
+            format!("rename {old} to {current} where you set it"),
+        );
+    }
+    if !report.findings.iter().any(|f| f.check == CHECK) {
+        report.ok(CHECK, "nothing left from a release before the rename");
+    }
 }
 
 fn check_home(report: &mut Report, inputs: &Inputs<'_>) {
@@ -394,6 +452,7 @@ sso_region = us-east-1
             userprofile_var: None,
             now: Timestamp::now(),
             refresh_failures: &BTreeMap::new(),
+            old_vars: Vec::new(),
         });
         let level_of = |check: &str, needle: &str| {
             report
@@ -455,6 +514,7 @@ sso_region = us-east-1
             userprofile_var: Some("/b".into()),
             now: Timestamp::now(),
             refresh_failures: &BTreeMap::new(),
+            old_vars: Vec::new(),
         })
         .report;
         assert_eq!(report.findings[0].check, "home");
