@@ -50,7 +50,8 @@ function awsx { In-Smoke aws $args }
 6. **Sync.** `gac sync --dry-run` prints a diff adding profiles to the `# BEGIN gac-redux sync session=smoke`
    block that setup created;
    `gac sync` reports `Synced N profiles`. Run `gac sync` again: `Already up to date`.
-7. **AWS call.** Pick a synced profile from `gac list` (named `<account>/<role>`), then
+7. **AWS call.** Pick a synced profile from `grep '^\[profile' "$SMOKE/.aws/config"` (in
+   PowerShell, `Select-String '^\[profile' "$env:SMOKE\.aws\config"`), then
    `awsx sts get-caller-identity --profile '<account>/<role>'` returns your assumed-role ARN.
 8. **Exec.** `gac exec '<account>/<role>' -- aws sts get-caller-identity` returns the same ARN.
 9. **Process mode.** `gac sync --mode process`, then the call from step 7 still returns the ARN,
