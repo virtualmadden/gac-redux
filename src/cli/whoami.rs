@@ -12,7 +12,7 @@ use crate::cli::WhoamiArgs;
 use crate::cli::context::Context;
 use crate::cli::status::{self, TokenStatus};
 use crate::cli::target::{self, RoleTarget, Source};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::ui;
 
 #[derive(Debug, Serialize)]
@@ -70,13 +70,11 @@ pub async fn run(ctx: &Context, args: WhoamiArgs) -> Result<()> {
     let target = target::resolve(ctx, &files, args.profile.as_deref(), None).await?;
     let whoami = describe(ctx, &target, Timestamp::now());
     let text = if args.json {
-        let mut json = serde_json::to_string_pretty(&whoami).expect("plain data serializes");
-        json.push('\n');
-        json
+        ui::json(&whoami)
     } else {
         render(&whoami, &target, Timestamp::now())
     };
-    ui::output(text).map_err(|err| Error::io("could not write to stdout", err))
+    ui::output(text)
 }
 
 fn describe(ctx: &Context, target: &RoleTarget, now: Timestamp) -> Whoami {

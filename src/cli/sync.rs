@@ -6,23 +6,24 @@ use crate::aws_files::managed_block::Block;
 use crate::aws_files::{AwsFiles, guards, managed_block};
 use crate::cli::SyncArgs;
 use crate::cli::context::Context;
-use crate::error::{Error, Result};
+use crate::domain::SessionName;
+use crate::error::Result;
 use crate::profiles::{self, PlannedProfile, SyncSettings};
 use crate::ui;
 
 pub async fn run(ctx: &Context, args: SyncArgs) -> Result<()> {
-    if args.remove {
-        return remove(ctx, args.dry_run).await;
-    }
     let files = ctx.files().await?;
     let session = ctx.resolve_session(&files, None)?;
     let name = session
         .name()
         .expect("sync resolves only named sessions")
         .clone();
-    let text = files.config_text();
     let blocks = ctx.blocks(&files)?;
     let existing = blocks.iter().find(|b| b.header.session == name.as_str());
+    if args.remove {
+        return remove(ctx, &files, &name, existing, args.dry_run).await;
+    }
+    let text = files.config_text();
 
     let settings = settings(existing, &args)?;
 
@@ -101,16 +102,15 @@ pub async fn run(ctx: &Context, args: SyncArgs) -> Result<()> {
 }
 
 /// `gac sync --remove`: deletes the session's block. Needs no login, so it works on the way out.
-async fn remove(ctx: &Context, dry_run: bool) -> Result<()> {
-    let files = ctx.files().await?;
-    let session = ctx.resolve_session(&files, None)?;
-    let name = session
-        .name()
-        .expect("sync resolves only named sessions")
-        .clone();
+async fn remove(
+    ctx: &Context,
+    files: &AwsFiles,
+    name: &SessionName,
+    block: Option<&Block>,
+    dry_run: bool,
+) -> Result<()> {
     let text = files.config_text();
-    let blocks = ctx.blocks(&files)?;
-    let Some(block) = blocks.iter().find(|b| b.header.session == name.as_str()) else {
+    let Some(block) = block else {
         ui::notice(format!(
             "There is no gac block for session `{name}`. Nothing to remove."
         ));
@@ -125,7 +125,7 @@ async fn remove(ctx: &Context, dry_run: bool) -> Result<()> {
     let updated = if keeps_session {
         let eol = managed_block::line_ending(text);
         let mut session_lines = String::new();
-        for line in profiles::render_session(&files.sso_session(&name)?) {
+        for line in profiles::render_session(&files.sso_session(name)?) {
             session_lines.push_str(&line);
             session_lines.push_str(eol);
         }
@@ -198,7 +198,7 @@ fn print_diff(text: &str, updated: &str, config_path: &str) -> Result<()> {
         .context_radius(3)
         .header(config_path, config_path)
         .to_string();
-    ui::output(diff).map_err(|err| Error::io("could not write to stdout", err))
+    ui::output(diff)
 }
 
 /// The stored settings (unless `--reset`), overridden by any flags given.

@@ -13,7 +13,7 @@ use crate::aws_files::AwsFiles;
 use crate::aws_files::managed_block::{self, Block};
 use crate::cli::StatusArgs;
 use crate::cli::context::Context;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::profiles::SyncSettings;
 use crate::ui;
 
@@ -116,14 +116,11 @@ pub async fn run(ctx: &Context, args: StatusArgs) -> Result<()> {
         sessions,
     };
     let text = if args.json {
-        let mut json =
-            serde_json::to_string_pretty(&status).expect("serializing plain data cannot fail");
-        json.push('\n');
-        json
+        ui::json(&status)
     } else {
         render(&status, now)
     };
-    ui::output(text).map_err(|err| Error::io("could not write to stdout", err))
+    ui::output(text)
 }
 
 fn named_status(
