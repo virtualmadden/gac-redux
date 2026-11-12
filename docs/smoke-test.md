@@ -6,6 +6,9 @@ it ([releasing.md](releasing.md)). It runs in a throwaway HOME, so your real `~/
 read or changed. You need the AWS CLI v2 and an Identity Center user with at least one account
 assignment.
 
+Run the setup from the root of a gac-redux checkout of the branch you are testing (for a
+release, its `chore/release-X.Y.Z` branch), so `cargo build` builds that branch.
+
 On macOS and Linux:
 
 ```sh
