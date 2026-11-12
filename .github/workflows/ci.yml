@@ -103,17 +103,26 @@ jobs:
       - run: aws --version
       - run: cargo nextest run --locked --profile ci
 
-  # A release pull request bumps the version, so it must add the notes the release publishes.
+  # A release pull request bumps the version, so it must add the notes the release publishes
+  # and name the version wherever docs/releasing.md says to.
   release-notes:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - run: |
           version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "gac-redux") | .version')
+          status=0
           if [ ! -s "docs/release-notes/$version.md" ]; then
             echo "::error::add docs/release-notes/$version.md: what changed in $version for someone running gac"
-            exit 1
+            status=1
           fi
+          for needle in "gac-redux-$version-amd64.deb:README.md" "gac-redux-$version-x86_64.rpm:README.md" "gac-redux $version:.github/ISSUE_TEMPLATE/bug.yml"; do
+            if ! grep -qF "${needle%%:*}" "${needle#*:}"; then
+              echo "::error file=${needle#*:}::name version $version: expected \"${needle%%:*}\""
+              status=1
+            fi
+          done
+          exit $status
 
   msrv:
     needs: changes

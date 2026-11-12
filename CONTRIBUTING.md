@@ -48,16 +48,11 @@ To try a change against a real Identity Center without touching your own AWS fil
 
 ## Releasing
 
-Maintainers release from a pull request titled `chore: release X.Y.Z` that:
-
-1. Bumps the version in `Cargo.toml` and `Cargo.lock`, and any version in the README's install
-   commands.
-2. Adds `docs/release-notes/X.Y.Z.md`: what changed for someone running `gac`, and anything they
-   need to do. CI fails the pull request without it. The release workflow publishes it above the
-   list of merged pull requests.
-
-After it merges, push an annotated tag `vX.Y.Z` on the merge commit. The release workflow builds
-and publishes the release, the Homebrew formula, the Scoop manifest and the winget pull request.
+Maintainers follow [docs/releasing.md](docs/releasing.md): a pull request titled
+`chore: release X.Y.Z` from the release template, with the version bump, the release notes and a
+smoke test against a real Identity Center, then an annotated tag `vX.Y.Z` on the merge commit.
+The release workflow builds and publishes the release, the Homebrew formula, the Scoop manifest
+and the winget pull request.
 
 ## Code of conduct
 
