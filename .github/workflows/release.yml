@@ -170,6 +170,19 @@ jobs:
           tar -xzf "$NAME.tar.gz"
           .github/scripts/linux-packages.sh "$VERSION" "$NAME" packages
           ls -l packages
+      # Docker Hub fails a pull now and then (a 500 stopped the 0.6.0 release), so the images are
+      # pulled first, with retries, and a failure to pull is not a failed package.
+      - name: Pull the images
+        run: |
+          for image in debian:stable-slim ubuntu:22.04 ubuntu:latest fedora:latest; do
+            for attempt in 1 2 3 4 5; do
+              docker pull -q "$image" && continue 2
+              echo "::warning::could not pull $image (attempt $attempt of 5)"
+              [ "$attempt" -lt 5 ] && sleep $((attempt * 10))
+            done
+            echo "::error::could not pull $image"
+            exit 1
+          done
       - name: Install on Debian, Ubuntu and Fedora
         run: |
           for image in debian:stable-slim ubuntu:22.04 ubuntu:latest; do
