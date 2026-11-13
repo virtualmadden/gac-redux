@@ -31,3 +31,4 @@ None of these needs a change on your side, but a script may notice them.
 | 0.5.1 | `gac status` and `gac doctor` try to refresh an expired token, as the next AWS command would, so they can reach the network. When the refresh fails, `token.refreshable` is `false` and `token.refreshError` has the service's error. |
 | 0.5.2 | `gac` with no arguments prints its help to stdout and exits with `0`. It printed to stderr and exited with `2` before. |
 | 0.6.0 | `fetchedAt` in `gac list --json` has no fractional seconds, like every other timestamp. `gac sync --remove` deletes a sync block, and `gac doctor` gained the `older-release` check. |
+| Unreleased | A call to AWS gives up after 60 seconds, retries included, and exits with `1`; one attempt waits at most 20 seconds. An endpoint that accepted the connection and never answered made gac hang before. |
