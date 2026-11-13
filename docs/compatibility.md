@@ -183,7 +183,7 @@ instead.
   [`src/cli/snapshots/gac_redux__cli__tests__the_stable_command_line.snap`](../src/cli/snapshots/gac_redux__cli__tests__the_stable_command_line.snap).
 - Every JSON shape above, the `credential_process` output and both blocks are snapshotted by
   [`tests/compatibility.rs`](../tests/compatibility.rs).
-- Exit codes `0` to `3` and `127` are checked across [`tests/cli.rs`](../tests/cli.rs).
+- Exit codes `0` to `3` and `127` are checked across [`tests/cli/`](../tests/cli/).
 
 A pull request that changes one of these snapshots other than by adding to it breaks this
 promise, and needs a deprecation instead.

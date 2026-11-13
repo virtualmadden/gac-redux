@@ -48,12 +48,10 @@ impl AwsFiles {
     pub async fn parse(config_text: String, credentials_text: &str) -> Result<Self> {
         let config = parse_one(EnvConfigFileKind::Config, &config_text)
             .await
-            .map_err(|err| Error::config(format!("cannot parse the AWS config file: {err}")))?;
+            .map_err(|err| parse_error("config", &err))?;
         let credentials = parse_one(EnvConfigFileKind::Credentials, credentials_text)
             .await
-            .map_err(|err| {
-                Error::config(format!("cannot parse the AWS credentials file: {err}"))
-            })?;
+            .map_err(|err| parse_error("credentials", &err))?;
         Ok(Self {
             config_text,
             config,
@@ -163,6 +161,19 @@ async fn parse_one(
     aws_config::profile::load(&Fs::from_slice(&[]), &Env::from_slice(&[]), &files, None).await
 }
 
+/// The SDK's own message only says the file could not be parsed; its source has the line and
+/// the reason, as "error parsing <path> on line N:\n  <reason>". The path is empty because the
+/// contents are supplied directly, so that prefix is dropped and the reason joins the line,
+/// keeping the message on one line for `gac doctor`.
+fn parse_error(file: &str, err: &aws_config::profile::ProfileFileLoadError) -> Error {
+    let detail =
+        std::error::Error::source(err).map_or_else(|| err.to_string(), ToString::to_string);
+    let detail = detail
+        .strip_prefix("error parsing  on ")
+        .map_or_else(|| detail.clone(), |rest| rest.replacen(":\n  ", ": ", 1));
+    Error::config(format!("cannot parse the AWS {file} file: {detail}"))
+}
+
 /// How to recover from a missing `[sso-session NAME]`. `gac setup` refuses to recreate a session
 /// whose gac block survived, so the block has to go first.
 pub fn missing_session_hint(config_text: &str, session: &str) -> String {
@@ -243,6 +254,22 @@ sso_region = us-east-1
             err.hint().unwrap(),
             "run `gac doctor --fix` to delete the gac block for session `missing`, then `gac setup --session missing`"
         );
+    }
+
+    // Regression: ISSUE-003 - a parse error dropped the line number the SDK reports
+    // Found by /qa on 2026-11-13
+    #[tokio::test]
+    async fn parse_errors_name_the_line() {
+        let config = "[default]\nregion = us-west-2\n[profile broken\n";
+        let err = AwsFiles::parse(config.to_owned(), "").await.unwrap_err();
+        assert!(err.to_string().contains("line 3: "), "{err}");
+        // One line, so `gac doctor` keeps its row layout.
+        assert!(!err.to_string().contains('\n'), "{err}");
+        let err = AwsFiles::parse(String::new(), "[default]\n[x\n")
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("credentials file"), "{err}");
+        assert!(err.to_string().contains("line 2"), "{err}");
     }
 
     #[tokio::test]
