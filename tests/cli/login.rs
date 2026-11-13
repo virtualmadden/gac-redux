@@ -168,6 +168,34 @@ fn pkce_login_reports_a_denied_sign_in() {
     assert!(!sandbox.token_path("corp").exists());
 }
 
+// Regression: ISSUE-002 - an unreachable endpoint printed the SDK's debug dump and no hint
+// Found by /qa on 2026-11-13
+#[test]
+fn login_explains_an_unreachable_endpoint() {
+    let sandbox = Sandbox::with_session();
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let endpoint = format!("http://{}", closed.local_addr().unwrap());
+    drop(closed);
+    let output = sandbox
+        .gac()
+        .env("AWS_ENDPOINT_URL_SSO_OIDC", &endpoint)
+        .args(["login", "--device-code", "--no-browser"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let text = stderr(&output);
+    assert!(
+        text.contains("RegisterClient failed: could not reach"),
+        "{text}"
+    );
+    assert!(
+        text.contains("help: check the network and HTTPS_PROXY"),
+        "{text}"
+    );
+    assert!(!text.contains("DispatchFailure"), "{text}");
+    assert!(!sandbox.token_path("corp").exists());
+}
+
 #[test]
 fn device_login_polls_until_approved() {
     let sandbox = Sandbox::with_session();

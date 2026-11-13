@@ -61,6 +61,13 @@ pub enum Error {
         message: String,
     },
 
+    /// An AWS endpoint that never answered: no network, a proxy in the way, or a timeout.
+    #[error("{operation} failed: could not reach the endpoint: {reason}")]
+    Unreachable {
+        operation: &'static str,
+        reason: String,
+    },
+
     /// The command `gac exec` was given could not be started.
     #[error("could not run `{command}`")]
     Spawn {
@@ -141,17 +148,36 @@ impl Error {
                 hint.clone()
             }
             Self::LoginRequired { login_args, .. } => Some(format!("run `gac login {login_args}`")),
+            Self::Unreachable { .. } => {
+                Some("check the network and HTTPS_PROXY, then run the command again".to_owned())
+            }
             _ => None,
         }
     }
 }
 
-/// Converts an SDK error into [`Error::Service`], keeping the service's error code and message.
+/// Converts an SDK error into [`Error::Service`], keeping the service's error code and message,
+/// or into [`Error::Unreachable`] when the request never got an answer.
 pub(crate) fn service<E, R>(operation: &'static str, err: &SdkError<E, R>) -> Error
 where
     E: ProvideErrorMetadata + std::error::Error + 'static,
     R: std::fmt::Debug,
 {
+    if matches!(
+        err,
+        SdkError::DispatchFailure(_) | SdkError::TimeoutError(_)
+    ) {
+        // The innermost cause, such as "Connection refused (os error 61)"; the outer layers
+        // repeat it inside the SDK's debug output.
+        let mut cause: &dyn std::error::Error = err;
+        while let Some(source) = cause.source() {
+            cause = source;
+        }
+        return Error::Unreachable {
+            operation,
+            reason: cause.to_string(),
+        };
+    }
     let message = match (err.code(), err.message()) {
         (Some(code), Some(message)) => format!("{code}: {message}"),
         (Some(code), None) => code.to_owned(),
