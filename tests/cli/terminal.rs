@@ -2,7 +2,7 @@
 
 use std::process::Stdio;
 
-use rexpect::process::wait::WaitStatus;
+use rexpect::process::WaitStatus;
 use rexpect::session::{PtySession, spawn_command};
 
 use super::*;
@@ -22,7 +22,7 @@ fn spawn(sandbox: &Sandbox, args: &[&str]) -> PtySession {
 }
 
 fn exit_code(session: &PtySession) -> i32 {
-    match session.process.wait().unwrap() {
+    match session.process().wait().unwrap() {
         WaitStatus::Exited(_, code) => code,
         status => panic!("gac did not exit: {status:?}"),
     }
