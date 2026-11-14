@@ -26,9 +26,10 @@ pub async fn run(ctx: &Context, args: ConsoleArgs) -> Result<()> {
         .or_else(|| target.region.clone());
     let partition = Partition::of(&target.session.region);
     let destination = partition.destination(args.destination.as_deref(), region.as_ref())?;
+    let endpoint = federation::endpoint(&partition)?;
     let issuer = target.session.start_url.as_str();
     let creds = target.credentials(ctx).await?;
-    let url = match federation::signin_url(&partition, &creds, issuer, &destination) {
+    let url = match federation::signin_url(&endpoint, &creds, issuer, &destination) {
         Ok(url) => url,
         // Cached credentials can be revoked before they expire, say by a permission set
         // change: fetch new ones and try once more.
@@ -36,7 +37,7 @@ pub async fn run(ctx: &Context, args: ConsoleArgs) -> Result<()> {
             tracing::debug!(%status, "the federation endpoint refused the credentials; fetching new ones");
             target.forget_credentials(ctx)?;
             let creds = target.credentials(ctx).await?;
-            federation::signin_url(&partition, &creds, issuer, &destination)
+            federation::signin_url(&endpoint, &creds, issuer, &destination)
                 .map_err(SigninError::into_error)?
         }
         Err(err) => return Err(err.into_error()),

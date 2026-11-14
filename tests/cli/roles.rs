@@ -375,6 +375,33 @@ fn console_signs_in_as_the_role_through_the_federation_endpoint() {
         .stderr(predicate::str::contains("SigninToken="));
 }
 
+// Regression: #78 - a cleartext endpoint override was sent the role's credentials
+#[test]
+fn console_refuses_a_cleartext_federation_endpoint() {
+    let sandbox = Sandbox::with_session();
+    role_profiles_config(&sandbox);
+    login_device(&sandbox);
+    sandbox
+        .gac()
+        .args(["console", "--print", "--profile", "dev"])
+        .env(
+            "GAC_REDUX_FEDERATION_ENDPOINT",
+            "http://signin.example.com/federation",
+        )
+        .assert()
+        .code(1)
+        .stdout("")
+        .stderr(predicate::str::contains(
+            "GAC_REDUX_FEDERATION_ENDPOINT must be an https:// URL",
+        ))
+        .stderr(predicate::str::contains(
+            "help: unset GAC_REDUX_FEDERATION_ENDPOINT",
+        ));
+    // Refused before the role's credentials were fetched, so none were sent anywhere.
+    assert_eq!(sandbox.mock.counter("credentials"), 0);
+    assert_eq!(sandbox.mock.counter("signin_token"), 0);
+}
+
 #[test]
 fn console_replaces_cached_credentials_the_endpoint_refuses() {
     let sandbox = Sandbox::with_session();
