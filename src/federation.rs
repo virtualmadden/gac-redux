@@ -5,14 +5,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::Deserialize;
-use url::Url;
+use url::{Host, Url};
 
 use crate::auth::role::RoleCredentials;
-use crate::error::Error;
+use crate::error::{Error, Result};
 use crate::partition::Partition;
 use crate::secret::{ExposeSecret, SecretString};
 
-/// Points the sign-in token request somewhere else; the tests' mock uses it.
+/// Points the sign-in token request somewhere else, for the tests' mock. It is not part of the
+/// compatibility promise.
 const ENDPOINT_VAR: &str = "GAC_REDUX_FEDERATION_ENDPOINT";
 
 #[derive(Debug, Deserialize)]
@@ -42,18 +43,46 @@ impl SigninError {
     }
 }
 
-/// The sign-in link for `creds`, landing on `destination`. `issuer` is where the console sends
-/// the user when the session ends. The link holds a sign-in token: treat it as a secret.
+/// The federation endpoint for `partition`, or its override. Check it before fetching the
+/// credentials it will be sent.
+pub fn endpoint(partition: &Partition) -> Result<Url> {
+    match std::env::var(ENDPOINT_VAR).ok().filter(|v| !v.is_empty()) {
+        Some(value) => override_endpoint(&value),
+        None => Ok(Url::parse(partition.signin).expect("a valid federation endpoint")),
+    }
+}
+
+/// The endpoint is sent live role credentials, so an override has to be HTTPS. Plain HTTP is
+/// allowed only to this computer, where the tests' mock listens.
+fn override_endpoint(value: &str) -> Result<Url> {
+    let url = Url::parse(value)
+        .ok()
+        .filter(|url| match (url.scheme(), url.host()) {
+            ("https", Some(_)) => true,
+            ("http", Some(Host::Domain(host))) => host.eq_ignore_ascii_case("localhost"),
+            ("http", Some(Host::Ipv4(ip))) => ip.is_loopback(),
+            ("http", Some(Host::Ipv6(ip))) => ip.is_loopback(),
+            _ => false,
+        });
+    url.ok_or_else(|| {
+        Error::config(format!(
+            "{ENDPOINT_VAR} must be an https:// URL, or http:// to localhost, not `{value}`"
+        ))
+        .with_hint(format!(
+            "unset {ENDPOINT_VAR} to use the AWS federation endpoint"
+        ))
+    })
+}
+
+/// The sign-in link for `creds` from `endpoint`, landing on `destination`. `issuer` is where
+/// the console sends the user when the session ends. The link holds a sign-in token: treat it
+/// as a secret.
 pub fn signin_url(
-    partition: &Partition,
+    endpoint: &Url,
     creds: &RoleCredentials,
     issuer: &str,
     destination: &Url,
 ) -> std::result::Result<SecretString, SigninError> {
-    let endpoint = std::env::var(ENDPOINT_VAR)
-        .ok()
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| partition.signin.to_owned());
     let session = serde_json::json!({
         "sessionId": creds.access_key_id,
         "sessionKey": creds.secret_access_key.expose_secret(),
@@ -69,7 +98,7 @@ pub fn signin_url(
         )
     };
     let mut response = agent()
-        .get(&endpoint)
+        .get(endpoint.as_str())
         .query("Action", "getSigninToken")
         .query("Session", &session)
         .call()
@@ -88,7 +117,7 @@ pub fn signin_url(
     let token: SigninTokenResponse =
         serde_json::from_str(&body).map_err(|err| failed(format!("unreadable response: {err}")))?;
 
-    let mut url = Url::parse(&endpoint).map_err(|err| failed(err.to_string()))?;
+    let mut url = endpoint.clone();
     url.query_pairs_mut()
         .append_pair("Action", "login")
         .append_pair("Issuer", issuer)
@@ -118,4 +147,40 @@ fn agent() -> ureq::Agent {
         .user_agent(concat!("gac-redux/", env!("CARGO_PKG_VERSION")))
         .build()
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_override_must_be_https_or_reach_only_this_computer() {
+        for allowed in [
+            "https://signin.example.com/federation",
+            "http://127.0.0.1:8080/federation",
+            "http://127.0.0.2/federation",
+            "http://[::1]:8080/federation",
+            "http://localhost:8080/federation",
+            "http://LOCALHOST/federation",
+        ] {
+            assert_eq!(
+                override_endpoint(allowed).unwrap().as_str(),
+                allowed.to_lowercase()
+            );
+        }
+        for refused in [
+            "http://signin.example.com/federation",
+            "http://10.0.0.1/federation",
+            "http://localhost.example.com/federation",
+            "http://127.0.0.1.example.com/federation",
+            "ftp://signin.example.com/federation",
+            "file:///etc/passwd",
+            "signin.example.com/federation",
+            "not a url",
+        ] {
+            let err = override_endpoint(refused).unwrap_err();
+            assert!(err.to_string().contains(ENDPOINT_VAR), "{err}");
+            assert_eq!(err.exit_code(), crate::error::exit::ERROR);
+        }
+    }
 }

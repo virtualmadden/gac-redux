@@ -157,6 +157,7 @@ meaning. `GAC_REDUX_LOG` takes the same filters as `RUST_LOG`; what the log says
 
 Besides the variables listed under `gac env`, `gac exec` sets `GAC_REDUX_EXEC` in the command's
 environment, so a nested `gac exec` notices. Its value is not part of the promise.
+`GAC_REDUX_FEDERATION_ENDPOINT` exists for gac's own tests and is not part of it either.
 
 ## What can change in any release
 
