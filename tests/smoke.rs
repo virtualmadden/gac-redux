@@ -59,6 +59,15 @@ fn smoke_test_against_a_real_identity_center() {
         wanted_profile: var("GAC_SMOKE_PROFILE"),
         role: None,
     };
+    // Check the AWS CLI before any login, so a missing one leaves no session to revoke.
+    let aws = text(&smoke.aws(&["--version"]));
+    let Some(aws) = aws
+        .split_whitespace()
+        .next()
+        .filter(|v| v.starts_with("aws-cli/2."))
+    else {
+        panic!("the smoke test needs the AWS CLI v2 on PATH, but `aws --version` printed:\n{aws}");
+    };
 
     let steps: [(&str, StepFn); 13] = [
         ("Setup", Smoke::setup),
@@ -102,17 +111,12 @@ fn smoke_test_against_a_real_identity_center() {
         format!("Failed at step {} of {}", passed + 1, steps.len())
     };
     let version = smoke.gac(&["--version"]);
-    let aws = smoke.aws(&["--version"]);
     println!("\nFor the release pull request:\n");
     println!(
-        "| {} {} | `{}` | {result}, with {} |",
+        "| {} {} | `{}` | {result}, with {aws} |",
         std::env::consts::OS,
         std::env::consts::ARCH,
         text(&version).trim(),
-        text(&aws)
-            .split_whitespace()
-            .next()
-            .unwrap_or("the AWS CLI"),
     );
     assert_eq!(passed, steps.len(), "{result}");
 }
