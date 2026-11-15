@@ -30,8 +30,10 @@ On a branch named `chore/release-X.Y.Z`:
 ## 2. The smoke test
 
 - [ ] Run [smoke-test.md](smoke-test.md) against a real Identity Center with a build of the
-      release branch, on at least one platform. Record each run in the pull request: platform,
-      `gac --version`, and the result. 1.0.0 needs a run on macOS, Linux and Windows.
+      release branch, on at least one platform:
+      `cargo test --release --test smoke -- --ignored --nocapture`. Paste the row it prints for
+      each run into the pull request: platform, `gac --version`, and the result. 1.0.0 needs a
+      run on macOS, Linux and Windows.
 
 ## 3. Merge and tag
 

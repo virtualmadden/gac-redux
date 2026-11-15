@@ -6,10 +6,31 @@ it ([releasing.md](releasing.md)). It runs in a throwaway HOME, so your real `~/
 read or changed. You need the AWS CLI v2 and an Identity Center user with at least one account
 assignment.
 
-Run the setup from the root of a gac-redux checkout of the branch you are testing (for a
-release, its `chore/release-X.Y.Z` branch), so `cargo build` builds that branch.
+## Run it
 
-On macOS and Linux:
+From the root of a gac-redux checkout of the branch you are testing (for a release, its
+`chore/release-X.Y.Z` branch), on macOS and Linux:
+
+```sh
+GAC_SMOKE_START_URL=https://<portal>.awsapps.com/start GAC_SMOKE_REGION=<region> \
+    cargo test --release --test smoke -- --ignored --nocapture
+```
+
+In PowerShell:
+
+```powershell
+$env:GAC_SMOKE_START_URL = "https://<portal>.awsapps.com/start"; $env:GAC_SMOKE_REGION = "<region>"
+cargo test --release --test smoke -- --ignored --nocapture
+```
+
+[`tests/smoke.rs`](../tests/smoke.rs) builds that branch and runs the steps below in a throwaway
+HOME. You approve the two logins, pick a role in `gac select` and confirm the console opened; it
+checks the rest, stops at the first failure, and ends with the row for the release pull request.
+The AWS calls use the first synced profile, or the one `GAC_SMOKE_PROFILE` names.
+
+## By hand
+
+To walk through the steps yourself, on macOS and Linux:
 
 ```sh
 cargo build --release
@@ -19,7 +40,7 @@ gac() { HOME="$SMOKE" USERPROFILE="$SMOKE" "$GAC" "$@"; }
 awsx() { HOME="$SMOKE" USERPROFILE="$SMOKE" aws "$@"; }
 ```
 
-On Windows, in PowerShell:
+In PowerShell:
 
 ```powershell
 cargo build --release
@@ -34,6 +55,8 @@ function In-Smoke($exe, $rest) {
 function gac { In-Smoke $env:GAC $args }
 function awsx { In-Smoke aws $args }
 ```
+
+## The steps
 
 1. **Setup.** `gac setup --session smoke --start-url https://<portal>.awsapps.com/start --region <region>`
    prints `Added [sso-session smoke]`.
