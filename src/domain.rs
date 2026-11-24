@@ -93,7 +93,9 @@ impl FromStr for AccountId {
     }
 }
 
-/// An IAM Identity Center permission set name, as the portal returns it.
+/// An IAM Identity Center permission set name, as the portal returns it. Identity Center allows
+/// only `[\w+=,.@-]` in one, so nothing else is accepted: role names end up in the
+/// `credential_process` command line, which the SDKs hand to a shell.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct RoleName(String);
@@ -103,10 +105,16 @@ impl FromStr for RoleName {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Error> {
-        if s.is_empty() || s.chars().any(|c| c.is_whitespace() || c.is_control()) {
-            Err(Error::usage(format!("invalid role name `{s}`")))
-        } else {
+        let valid = !s.is_empty()
+            && s.chars().all(|c| {
+                c.is_ascii_alphanumeric() || matches!(c, '_' | '+' | '=' | ',' | '.' | '@' | '-')
+            });
+        if valid {
             Ok(Self(s.to_owned()))
+        } else {
+            Err(Error::usage(format!(
+                "invalid role name `{s}`: permission set names use letters, digits and _+=,.@-"
+            )))
         }
     }
 }
@@ -205,6 +213,30 @@ mod tests {
         assert!("111122223333".parse::<AccountId>().is_ok());
         assert!("11112222333".parse::<AccountId>().is_err());
         assert!("11112222333x".parse::<AccountId>().is_err());
+    }
+
+    #[test]
+    fn role_names_follow_the_permission_set_pattern() {
+        for ok in ["AdministratorAccess", "Read_Only", "a+b=c,d.e@f-g", "x"] {
+            assert!(ok.parse::<RoleName>().is_ok(), "{ok}");
+        }
+        for bad in [
+            "",
+            "has space",
+            "X;id",
+            "$(id)",
+            "`id`",
+            "a|b",
+            "a&b",
+            "a'b",
+            "a\"b",
+            "a#b",
+            "a/b",
+            "a\nb",
+            "caf\u{e9}",
+        ] {
+            assert!(bad.parse::<RoleName>().is_err(), "{bad:?}");
+        }
     }
 
     #[test]
