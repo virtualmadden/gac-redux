@@ -25,6 +25,9 @@ use clap::error::ErrorKind;
 use clap::parser::ValueSource;
 use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
+use tracing_subscriber::filter::filter_fn;
+use tracing_subscriber::layer::SubscriberExt as _;
+use tracing_subscriber::util::SubscriberInitExt as _;
 
 use crate::error::{Error, Result};
 use crate::profiles;
@@ -475,12 +478,23 @@ fn init_tracing(verbose: u8) {
     let filter =
         EnvFilter::try_from_env("GAC_REDUX_LOG").unwrap_or_else(|_| EnvFilter::new(default));
     let ansi = std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none();
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stderr)
-        .with_ansi(ansi)
-        .without_time()
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(filter_fn(|meta| !is_raw_dependency_trace(meta)))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_ansi(ansi)
+                .without_time(),
+        )
         .try_init();
+}
+
+/// Whether an event or span is a dependency's trace output. At trace the HTTP and SDK crates
+/// print raw requests and responses, which carry tokens and credentials, so it is dropped
+/// whatever `GAC_REDUX_LOG` asks for. gac's own trace output never holds a secret.
+fn is_raw_dependency_trace(meta: &tracing::Metadata<'_>) -> bool {
+    *meta.level() == tracing::Level::TRACE && !meta.target().starts_with("gac_redux")
 }
 
 #[cfg(test)]

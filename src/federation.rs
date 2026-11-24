@@ -97,11 +97,11 @@ pub fn signin_url(
             .with_hint("check the network and HTTPS_PROXY, then run the command again"),
         )
     };
+    // A form POST, as in the AWS guide's own example: the credentials stay out of the URL, which
+    // proxies and HTTP logs record.
     let mut response = agent()
-        .get(endpoint.as_str())
-        .query("Action", "getSigninToken")
-        .query("Session", &session)
-        .call()
+        .post(endpoint.as_str())
+        .send_form([("Action", "getSigninToken"), ("Session", session.as_str())])
         .map_err(|err| failed(err.to_string()))?;
     let status = response.status();
     let body = response
