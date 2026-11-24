@@ -5,7 +5,7 @@ use crate::aws_files::default_block::{
     self, ACCOUNT_KEY, DefaultError, Found, ROLE_KEY, SESSION_KEY,
 };
 use crate::aws_files::section::Section;
-use crate::aws_files::{AwsFiles, managed_block};
+use crate::aws_files::{AwsFiles, guards, managed_block};
 use crate::cli::SelectArgs;
 use crate::cli::context::Context;
 use crate::cli::target::{self, Row};
@@ -39,6 +39,17 @@ pub async fn run(ctx: &Context, args: SelectArgs) -> Result<()> {
         .with_hint(format!(
             "move the keys in {} to another profile name, then run gac select again",
             ctx.paths.credentials_file().display()
+        )));
+    }
+    if let Some(key) = files
+        .config_profile("default")
+        .and_then(guards::non_sso_credential_key)
+    {
+        return Err(Error::config(format!(
+            "[default] in the config file sets {key}; an SSO account and role beside it would mix two ways of getting credentials"
+        ))
+        .with_hint(format!(
+            "move {key} and the settings that go with it to another profile, then run gac select again"
         )));
     }
     let (mut section, range) = match found {
