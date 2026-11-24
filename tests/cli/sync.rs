@@ -510,3 +510,29 @@ fn sync_switches_a_block_between_modes_with_a_clean_diff() {
         "switching back restores the same bytes"
     );
 }
+
+// Regression: #85 - a role name the portal returned was written unquoted into the
+// `credential_process` line, which the Rust SDK runs through a shell
+#[test]
+fn sync_skips_role_names_identity_center_would_never_return() {
+    let sandbox = Sandbox::with_session();
+    sandbox.mock.set_accounts(vec![account(
+        "111122223333",
+        "payments-prod",
+        &["ReadOnly", "X;touch${IFS}/tmp/gac-pwned;#", "Y$(id)"],
+    )]);
+    login_device(&sandbox);
+    sandbox
+        .gac()
+        .args(["sync", "--mode", "process"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "skipping role with an unexpected name `X;touch${IFS}/tmp/gac-pwned;#`",
+        ))
+        .stderr(predicate::str::contains("(1 added, 0 removed)"));
+    let config = sandbox.config();
+    assert!(config.contains("--role-name ReadOnly"), "{config}");
+    assert!(!config.contains("touch"), "{config}");
+    assert!(!config.contains("$(id)"), "{config}");
+}

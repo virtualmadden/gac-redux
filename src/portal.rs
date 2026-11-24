@@ -103,7 +103,10 @@ impl Portal {
             .filter_map(|info| {
                 let id = info.account_id()?;
                 let Ok(account_id) = id.parse::<AccountId>() else {
-                    tracing::warn!("skipping account with an unexpected id `{id}`");
+                    tracing::warn!(
+                        "skipping account with an unexpected id `{}`",
+                        id.escape_debug()
+                    );
                     return None;
                 };
                 Some(Account {
@@ -234,7 +237,17 @@ async fn list_roles(
         .map_err(Box::new)?;
     let mut roles: Vec<RoleName> = listed
         .iter()
-        .filter_map(|role| role.role_name()?.parse().ok())
+        .filter_map(|role| {
+            let name = role.role_name()?;
+            let Ok(role) = name.parse::<RoleName>() else {
+                tracing::warn!(
+                    "skipping role with an unexpected name `{}`",
+                    name.escape_debug()
+                );
+                return None;
+            };
+            Some(role)
+        })
         .collect();
     roles.sort();
     Ok(roles)
