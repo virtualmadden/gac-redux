@@ -772,3 +772,43 @@ fn credential_process_prints_the_json_credential_process_expects() {
         .code(2)
         .stderr(predicate::str::contains("needs --session NAME"));
 }
+
+// Regression: #87 - `GAC_REDUX_LOG=trace` logged the role's credentials (in the federation URL),
+// the SSO access token (a request header) and the device code (a response)
+#[test]
+fn no_log_level_shows_a_secret() {
+    for (filter, flag) in [
+        (Some("trace"), None),
+        (Some("debug"), None),
+        (None, Some("-vv")),
+    ] {
+        let sandbox = Sandbox::with_session();
+        role_profiles_config(&sandbox);
+        let run = |args: Vec<String>| {
+            let mut cmd = sandbox.gac();
+            cmd.args(flag).args(&args);
+            if let Some(filter) = filter {
+                cmd.env("GAC_REDUX_LOG", filter);
+            }
+            let output = cmd.output().unwrap();
+            assert!(output.status.success(), "{args:?}: {}", stderr(&output));
+            stderr(&output)
+        };
+        let words = |line: &str| line.split(' ').map(str::to_owned).collect::<Vec<_>>();
+        let mut exec = words("exec --profile dev --");
+        exec.extend(exit_with("0"));
+        let logs = [
+            run(words("login --device-code --no-browser")),
+            run(words("sync")),
+            run(exec),
+            run(words("console --print --profile dev")),
+        ]
+        .concat();
+        assert!(logs.contains("DEBUG"), "{filter:?} {flag:?}: the log is on");
+        assert_no_secrets(
+            &logs,
+            &sandbox.mock.secrets(),
+            &format!("{filter:?} {flag:?}"),
+        );
+    }
+}

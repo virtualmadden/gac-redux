@@ -154,6 +154,8 @@ The blocks:
 `AWS_ENDPOINT_URL_SSO`, `AWS_ENDPOINT_URL_SSO_OIDC`, `AWS_PROFILE`, `AWS_DEFAULT_PROFILE`,
 `AWS_REGION`, `AWS_DEFAULT_REGION`, `AWS_ACCESS_KEY_ID` and `NO_COLOR`, and they keep their
 meaning. `GAC_REDUX_LOG` takes the same filters as `RUST_LOG`; what the log says is not stable.
+Other crates' trace output is always dropped: it prints raw requests, with their tokens and
+credentials.
 
 Besides the variables listed under `gac env`, `gac exec` sets `GAC_REDUX_EXEC` in the command's
 environment, so a nested `gac exec` notices. Its value is not part of the promise.

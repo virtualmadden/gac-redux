@@ -296,7 +296,11 @@ async fn handle(state: &Arc<Mutex<State>>, req: Request<Incoming>) -> Reply {
         (Method::POST, "/device_authorization") => device_authorization(&mut s, &body),
         (Method::POST, "/token") => token(&mut s, &body),
         (Method::GET, "/authorize") => authorize(&mut s, &query),
-        (Method::GET, "/federation") => federation(&mut s, &query),
+        // A form POST only, so the credentials are never in a URL.
+        (Method::POST, "/federation") if query.is_empty() => {
+            let form = url::form_urlencoded::parse(&raw).into_owned().collect();
+            federation(&mut s, &form)
+        }
         // STS speaks the query protocol: a form body, an XML answer.
         (Method::POST, "/") => sts(&mut s, &raw, &authorization),
         (method, portal_path) => {
