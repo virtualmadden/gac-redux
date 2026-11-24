@@ -192,6 +192,44 @@ fn select_adopts_a_hand_written_default_only_with_consent() {
     );
 }
 
+/// The SDKs resolve `role_arn` before the SSO keys, so adding an account and role next to it
+/// would leave AWS commands running as the other role.
+#[test]
+fn select_refuses_a_default_that_resolves_another_way() {
+    let sandbox = Sandbox::new();
+    sandbox.write_config(&format!(
+        "{SESSION}\n[default]\nrole_arn = arn:aws:iam::111122223333:role/Deploy\nsource_profile = base\n"
+    ));
+    login_device(&sandbox);
+    let original = sandbox.config();
+    sandbox
+        .gac()
+        .args(["select", "sandbox/ReadOnly", "--adopt"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "[default] in the config file sets role_arn",
+        ))
+        .stderr(predicate::str::contains("move role_arn"));
+    assert_eq!(sandbox.config(), original, "nothing is written");
+
+    // A key added by hand inside the default block counts too.
+    let edited = format!("{SESSION}\n{}", default_block("777788889999", "PowerUser")).replace(
+        "[default]\n",
+        "[default]\ncredential_process = /usr/local/bin/creds\n",
+    );
+    sandbox.write_config(&edited);
+    sandbox
+        .gac()
+        .args(["select", "sandbox/ReadOnly"])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(
+            "[default] in the config file sets credential_process",
+        ));
+    assert_eq!(sandbox.config(), edited, "nothing is written");
+}
+
 #[test]
 fn select_without_a_terminal_needs_a_target() {
     let sandbox = Sandbox::with_session();

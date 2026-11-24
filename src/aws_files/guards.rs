@@ -27,6 +27,17 @@ pub fn resolving_key(profile: &Profile) -> Option<&'static str> {
         .find(|key| profile.get(key).is_some())
 }
 
+/// A key that gets a profile credentials other than through `sso_session`: any other resolving
+/// key, or a static key. `gac select` must not add an SSO account and role beside one.
+pub fn non_sso_credential_key(profile: &Profile) -> Option<&'static str> {
+    RESOLVING_KEYS
+        .iter()
+        .chain(STATIC_KEYS)
+        .copied()
+        .filter(|key| *key != "sso_session")
+        .find(|key| profile.get(key).is_some())
+}
+
 pub fn has_static_keys(profile: &Profile) -> bool {
     STATIC_KEYS.iter().any(|key| profile.get(key).is_some())
 }
