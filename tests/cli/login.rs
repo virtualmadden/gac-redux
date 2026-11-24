@@ -108,6 +108,30 @@ fn setup_without_a_terminal_needs_its_flags() {
         .stderr(predicate::str::contains("--start-url is required"));
 }
 
+// Regression: #86 - a newline in --start-url passed the check and wrote extra lines, such as a
+// whole profile with a `credential_process`, into ~/.aws/config
+#[test]
+fn setup_refuses_a_start_url_with_line_breaks_or_spaces() {
+    let sandbox = Sandbox::new();
+    let original = "[default]\nregion = eu-west-1\n";
+    sandbox.write_config(original);
+    for start_url in [
+        "https://corp.awsapps.com/start\n[profile pwn]\ncredential_process = /tmp/evil.sh",
+        "https://corp.awsapps.com/start\r\nsso_region = evil",
+        "https://corp.awsapps.com/\tstart",
+        "https://corp.awsapps.com/start extra",
+    ] {
+        sandbox
+            .gac()
+            .args(["setup", "--session", "corp", "--region", "us-west-2"])
+            .args(["--start-url", start_url])
+            .assert()
+            .code(2)
+            .stderr(predicate::str::contains("invalid start URL"));
+    }
+    assert_eq!(sandbox.config(), original);
+}
+
 #[test]
 fn pkce_login_writes_a_token_the_aws_cli_can_use() {
     let sandbox = Sandbox::with_session();

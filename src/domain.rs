@@ -133,6 +133,11 @@ impl FromStr for StartUrl {
             Error::usage(format!("invalid start URL `{s}`"))
                 .with_hint("expected https://<your-portal>.awsapps.com/start")
         };
+        // The URL parser drops tabs and line breaks, but the string is written as is, so it
+        // must not hold any: a line break would add lines to ~/.aws/config.
+        if s.chars().any(|c| c.is_whitespace() || c.is_control()) {
+            return Err(invalid());
+        }
         let url = url::Url::parse(s).map_err(|_| invalid())?;
         if url.scheme() != "https" || url.host_str().is_none_or(str::is_empty) {
             return Err(invalid());
@@ -244,6 +249,16 @@ mod tests {
         assert!("https://my.awsapps.com/start".parse::<StartUrl>().is_ok());
         assert!("http://my.awsapps.com/start".parse::<StartUrl>().is_err());
         assert!("my.awsapps.com/start".parse::<StartUrl>().is_err());
+        for spaced in [
+            "https://my.awsapps.com/start\n[profile x]",
+            "https://my.awsapps.com/start\r",
+            "https://my.awsapps.com/\tstart",
+            "https://my.awsapps.com/start ",
+            " https://my.awsapps.com/start",
+            "https://my.awsapps.com/st\u{0}art",
+        ] {
+            assert!(spaced.parse::<StartUrl>().is_err(), "{spaced:?}");
+        }
         let url: StartUrl = "https://My.awsapps.com/start/".parse().unwrap();
         assert_eq!(url.as_str(), "https://My.awsapps.com/start/");
     }
