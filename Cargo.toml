@@ -32,7 +32,7 @@ http-body-util = "0.1"
 hyper = { version = "1", features = ["server", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 inquire = "0.9"
-jiff = { version = "0.2", features = ["serde"] }
+jiff = { version = "1.0", features = ["serde"] }
 miette = { version = "7", features = ["fancy"] }
 percent-encoding = "2.3"
 rand = "0.10"
