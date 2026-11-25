@@ -321,3 +321,25 @@ fn a_revoked_token_requires_login() {
         .code(3)
         .stderr(predicate::str::contains("rejected the SSO token"));
 }
+
+/// A symlink planted in the token cache must not redirect the token: the login replaces the link
+/// with a private regular file and leaves the file it pointed at alone.
+#[cfg(unix)]
+#[test]
+fn login_replaces_a_symlink_in_the_token_cache() {
+    use std::os::unix::fs::PermissionsExt;
+    let sandbox = Sandbox::with_session();
+    let outside = sandbox.home().join("outside.txt");
+    std::fs::write(&outside, "not a token").unwrap();
+    let path = sandbox.token_path("corp");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::os::unix::fs::symlink(&outside, &path).unwrap();
+
+    login_device(&sandbox);
+
+    assert_eq!(std::fs::read_to_string(&outside).unwrap(), "not a token");
+    let meta = std::fs::symlink_metadata(&path).unwrap();
+    assert!(meta.file_type().is_file(), "the link is now a regular file");
+    assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+    assert!(sandbox.token("corp")["accessToken"].is_string());
+}

@@ -1,8 +1,9 @@
 //! File discipline: atomic writes, private modes and advisory locks. Nothing here knows about AWS.
 //!
 //! Every write goes to a temp file in the destination directory, is fsynced, renamed over the
-//! target and followed by an fsync of the directory. Symlinked targets are resolved first so a
-//! dotfile manager's link survives. Modes are kept, and secret files are never looser than 0600.
+//! target and followed by an fsync of the directory. A symlinked config file is resolved first so
+//! a dotfile manager's link survives; a symlinked secret file is replaced, never followed. Modes
+//! are kept, and secret files are never looser than 0600.
 
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Write};
@@ -101,26 +102,39 @@ pub fn set_mode(path: &Path, mode: u32) -> Result<()> {
     Ok(())
 }
 
+fn is_symlink(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
+}
+
 /// The file a write to `path` should land in: the target of a symlink, otherwise `path` itself.
 fn resolve_target(path: &Path) -> Result<PathBuf> {
-    match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => {
-            fs::canonicalize(path).map_err(|err| Error::io_at("resolve symlink", path, err))
-        }
-        _ => Ok(path.to_path_buf()),
+    if is_symlink(path) {
+        fs::canonicalize(path).map_err(|err| Error::io_at("resolve symlink", path, err))
+    } else {
+        Ok(path.to_path_buf())
     }
 }
 
-/// Atomically replaces `path` with `contents`.
+/// Atomically replaces `path` with `contents`. A symlink at `path` is followed for
+/// [`ModePolicy::Keep`], so a dotfile manager's link survives. For [`ModePolicy::Private`] it is
+/// replaced by a regular file: a planted link must not send a secret somewhere else.
 pub fn write_atomic(path: &Path, contents: &[u8], policy: ModePolicy) -> Result<()> {
-    let target = resolve_target(path)?;
+    let target = match policy {
+        ModePolicy::Keep => resolve_target(path)?,
+        ModePolicy::Private => path.to_path_buf(),
+    };
     let dir = target
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     ensure_private_dir(dir)?;
 
-    let existing_mode = mode(&target);
+    let existing_mode = if is_symlink(&target) {
+        tracing::debug!(path = %target.display(), "replacing a symlink with a private file");
+        None
+    } else {
+        mode(&target)
+    };
     let mut tmp = tempfile::Builder::new()
         .prefix(".gac-redux-")
         .suffix(".tmp")
@@ -292,6 +306,29 @@ mod tests {
                 .is_symlink()
         );
         assert_eq!(fs::read(&real).unwrap(), b"new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaces_symlinks_to_secrets_instead_of_following_them() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("outside");
+        fs::write(&outside, "untouched").unwrap();
+        fs::set_permissions(&outside, fs::Permissions::from_mode(0o644)).unwrap();
+        let cache = dir.path().join("cache");
+        fs::create_dir(&cache).unwrap();
+        let link = cache.join("token.json");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+
+        write_atomic(&link, b"secret", ModePolicy::Private).unwrap();
+
+        assert_eq!(fs::read(&outside).unwrap(), b"untouched");
+        assert_eq!(mode(&outside), Some(0o644));
+        let meta = fs::symlink_metadata(&link).unwrap();
+        assert!(meta.file_type().is_file(), "the link is now a regular file");
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        assert_eq!(fs::read(&link).unwrap(), b"secret");
     }
 
     #[tokio::test]
